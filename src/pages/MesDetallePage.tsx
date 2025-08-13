@@ -14,6 +14,15 @@ export default function MesDetallePage({ token }: { token: string }) {
   const [facturas, setFacturas] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Filtro de ventas
+  const ventaCampos = ventas.length > 0
+    ? Object.keys(ventas[0]).map(k => ({ key: k, label: k }))
+    : []
+  // Eliminados: const [ventaCampo, setVentaCampo] = useState<string>('')
+  // Eliminados: const [ventaValor, setVentaValor] = useState<string>('')
+  const [ventaFiltros, setVentaFiltros] = useState([{ campo: '', valor: '' }])
+  const [columnasVisibles, setColumnasVisibles] = useState<string[]>([])
+  const [showColumnPanel, setShowColumnPanel] = useState(false)
 
   const fetchData = async () => {
     setLoading(true)
@@ -46,7 +55,7 @@ export default function MesDetallePage({ token }: { token: string }) {
 
   return (
     <div className="mes-detalle-page">
-      <h2>Ventas y facturas de un mes</h2>
+      <h2>Ventas y facturas por fecha</h2>
       <form onSubmit={e => { e.preventDefault(); fetchData() }} style={{display:'flex',alignItems:'flex-end',gap:'1.5rem',flexWrap:'wrap'}}>
         <div style={{display:'flex',flexDirection:'column',alignItems:'flex-start'}}>
           <label style={{marginBottom:4}}>Año:</label>
@@ -61,8 +70,8 @@ export default function MesDetallePage({ token }: { token: string }) {
           <input type="number" value={dia} onChange={e => setDia(e.target.value === '' ? '' : Number(e.target.value))} min={1} max={31} placeholder="Todo el mes" style={{width:60}} />
         </div>
         <div style={{display:'flex',flexDirection:'column',alignItems:'flex-start'}}>
-          <span style={{visibility:'hidden',height:20,marginBottom:4}}>&nbsp;</span>
-          <button type="submit" style={{height:36,minWidth:60,margin:0}}>Ver</button>
+          <label style={{marginBottom: 4, visibility: 'hidden'}}>Acción</label>
+          <button type="submit" style={{height:36,minWidth:60,marginBottom:8}}>Ver</button>
         </div>
       </form>
       <div style={{marginTop:'0.5rem',color:'#555',fontSize:'0.97em'}}>
@@ -75,33 +84,103 @@ export default function MesDetallePage({ token }: { token: string }) {
       {error && <div style={{color:'red',marginTop:'1.5rem'}}>Error: {error}</div>}
       <div style={{marginTop:'2.5rem'}}>
         <h3>Ventas</h3>
+        {/* Filtro solo tras pulsar 'Ver' y si hay datos */}
+        {ventas.length > 0 && (
+          <div style={{display:'flex',alignItems:'flex-end',gap:'1.5rem',marginBottom:'1rem',flexWrap:'wrap',justifyContent:'space-between'}}>
+            <div>
+              {ventaFiltros.map((filtro, idx) => (
+                <div key={idx} style={{display:'flex',alignItems:'flex-end',gap:'1rem',marginBottom: idx < ventaFiltros.length-1 ? '0.5rem' : 0}}>
+                  <div style={{display:'flex',flexDirection:'column',alignItems:'flex-start'}}>
+                    <label style={{marginBottom:4}}>Filtrar ventas por:</label>
+                    <select value={filtro.campo} onChange={e => {
+                      const nuevo = [...ventaFiltros]
+                      nuevo[idx].campo = e.target.value
+                      nuevo[idx].valor = ''
+                      setVentaFiltros(nuevo)
+                    }} style={{width:140}}>
+                      <option value="">(Selecciona campo)</option>
+                      {ventaCampos.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
+                    </select>
+                  </div>
+                  <div style={{display:'flex',flexDirection:'column',alignItems:'flex-start'}}>
+                    <label style={{marginBottom:4}}>Valor:</label>
+                    <select value={filtro.valor} onChange={e => {
+                      const nuevo = [...ventaFiltros]
+                      nuevo[idx].valor = e.target.value
+                      setVentaFiltros(nuevo)
+                    }} style={{width:140}} disabled={!filtro.campo}>
+                      <option value="">Todos</option>
+                      {filtro.campo && [...new Set(ventas.map(v => v[filtro.campo]).filter(v => v !== undefined && v !== null))].map((v, i) => (
+                        <option key={i} value={v}>{v}</option>
+                      ))}
+                    </select>
+                  </div>
+                  {idx === ventaFiltros.length-1 && filtro.campo && (
+                    <button type="button" style={{marginLeft:8}} onClick={() => setVentaFiltros([...ventaFiltros, { campo: '', valor: '' }])}>+</button>
+                  )}
+                  {ventaFiltros.length > 1 && (
+                    <button type="button" style={{marginLeft:8}} onClick={() => setVentaFiltros(ventaFiltros.filter((_, i) => i !== idx))}>-</button>
+                  )}
+                </div>
+              ))}
+            </div>
+            {/* Selector de columnas */}
+            <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',marginLeft:'auto'}}>
+              <button type="button" style={{marginBottom:4,padding:'4px 12px',borderRadius:4,border:'1px solid #b3c6e0',background:'#f6f8fa',cursor:'pointer'}} onClick={() => setShowColumnPanel(v => !v)}>
+                {showColumnPanel ? 'Ocultar columnas ▲' : 'Mostrar columnas ▼'}
+              </button>
+              {showColumnPanel && (
+                <div style={{border:'1px solid #b3c6e0',borderRadius:6,background:'#fff',boxShadow:'0 2px 8px #0001',padding:'10px',maxHeight:180,overflowY:'auto',minWidth:180,marginBottom:4}}>
+                  <label style={{fontWeight:600,marginBottom:8,display:'block'}}>Columnas a mostrar:</label>
+                  <div style={{display:'flex',flexDirection:'column',gap:'0.5rem'}}>
+                    {ventaCampos.map(c => (
+                      <label key={c.key} style={{display:'flex',alignItems:'center',marginRight:8}}>
+                        <input
+                          type="checkbox"
+                          checked={columnasVisibles.length === 0 || columnasVisibles.includes(c.key)}
+                          onChange={e => {
+                            let nuevas = columnasVisibles.length === 0 ? ventaCampos.map(col=>col.key) : [...columnasVisibles]
+                            if (e.target.checked) {
+                              if (!nuevas.includes(c.key)) nuevas.push(c.key)
+                            } else {
+                              nuevas = nuevas.filter(k => k !== c.key)
+                            }
+                            setColumnasVisibles(nuevas)
+                          }}
+                        />
+                        {c.label}
+                      </label>
+                    ))}
+                  </div>
+                  <small style={{color:'#555'}}>Marca/desmarca para mostrar u ocultar columnas</small>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
         <div style={{overflowX:'auto'}}>
-          <table>
+          <table style={{whiteSpace:'nowrap'}}>
             <thead>
               <tr style={{background:'#b3c6e0'}}>
-                <th>ID</th>
-                <th>SKU</th>
-                <th>Descripción</th>
-                <th>Fecha</th>
-                <th>Cantidad</th>
-                <th>Total (€)</th>
+                {ventas.length > 0 ? (columnasVisibles.length ? columnasVisibles : Object.keys(ventas[0])).map((col) => (
+                  <th key={col}>{col}</th>
+                )) : <th>ID</th>}
               </tr>
             </thead>
             <tbody>
               {ventas.length === 0 ? (
                 <tr>
-                  <td colSpan={6} style={{textAlign:'center',color:'#888',background:'#f6f8fa'}}>No hay ventas registradas para el filtro seleccionado.</td>
+                  <td colSpan={1} style={{textAlign:'center',color:'#888',background:'#f6f8fa'}}>No hay ventas registradas para el filtro seleccionado.</td>
                 </tr>
-              ) : ventas.map((v, i) => (
-                <tr key={i}>
-                  <td>{v.ID}</td>
-                  <td>{v.SELLER_SKU}</td>
-                  <td>{v.ITEM_DESCRIPTION}</td>
-                  <td>{v.TRANSACTION_COMPLETE_DATE_DT || v.TRANSACTION_COMPLETE_DATE}</td>
-                  <td>{v.QTY}</td>
-                  <td>{v.TOTAL_PRICE_OF_ITEMS_AMT_VAT_INCL ?? v.TOTAL_PRICE_OF_ITEMS_AMT_VAT_EXCL}</td>
-                </tr>
-              ))}
+              ) : ventas
+                .filter(v => ventaFiltros.every(f => !f.campo || f.valor === '' || v[f.campo] === f.valor))
+                .map((v, i) => (
+                  <tr key={i}>
+                    {(columnasVisibles.length ? columnasVisibles : Object.keys(ventas[0])).map((col) => (
+                      <td key={col}>{v[col]}</td>
+                    ))}
+                  </tr>
+                ))}
             </tbody>
           </table>
         </div>
