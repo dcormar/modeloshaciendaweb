@@ -1,5 +1,8 @@
+import logging, os
+from dotenv import load_dotenv
 
-import logging
+# Carga .env en variables de entorno
+load_dotenv()
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from auth import router as auth_router
@@ -8,12 +11,12 @@ from facturas_api import router as facturas_router
 from ventas_api import router as ventas_router
 from dashboard_api import router as dashboard_router
 from modelos_api import router as modelos_router
-
+from upload_api import router as upload_router
+from upload_historico_api import router as upload_historico_router
 
 
 
 # Configuración global de logging
-import os
 log_path = os.path.join(os.path.dirname(__file__), "log/modeloshaciendaweb.log")
 log_format = '%(asctime)s %(levelname)s %(name)s %(message)s'
 logging.basicConfig(
@@ -44,6 +47,9 @@ app.include_router(facturas_router)
 app.include_router(ventas_router)
 app.include_router(dashboard_router)
 app.include_router(modelos_router)
+app.include_router(upload_router)
+app.include_router(upload_historico_router)
+
 logger.info("Routers montados y aplicación FastAPI iniciada")
 
 @app.get("/")

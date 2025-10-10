@@ -28,6 +28,7 @@ export default function LoginPage({ onLogin }: { onLogin: (token: string) => voi
 
   return (
     <div className="login-page">
+      
       <h2>Iniciar sesión</h2>
       <form onSubmit={handleSubmit}>
         <input

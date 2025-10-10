@@ -3,9 +3,10 @@ from pydantic import BaseModel
 from typing import Optional
 import httpx
 from datetime import datetime
+import logging, os
 
-SUPABASE_URL = "https://rzuyndmogkawqdstlnht.supabase.co"
-SUPABASE_KEY = "sb_secret_dUm0eji6_z3fiu6Z7vn2aQ_fbHKu5zA"
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
 router = APIRouter(prefix="/modelos", tags=["modelos"])
 

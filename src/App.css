@@ -1,5 +1,5 @@
 #root {
-  max-width: 1280px;
+  max-width: 1440px;
   margin: 0 auto;
   padding: 2rem;
   text-align: center;
@@ -39,4 +39,306 @@
 
 .read-the-docs {
   color: #888;
+}
+
+/* NAV */
+.navbar {
+  display: flex;
+  gap: 10px;
+}
+
+/* Enlaces del menú */
+.navbar a {
+  display: inline-block;               /* evita comportamientos raros del inline puro */
+  padding: 8px 14px;
+  border-radius: 8px;
+  text-decoration: none;
+  color: #e5e7eb;                       /* gris claro */
+  border: 1px solid transparent;
+}
+
+/* Hover */
+.navbar a:hover {
+  background: #1f2937;                  /* gris oscuro */
+}
+
+/* Enfoque accesible (cuando navegas con teclado) */
+.navbar a:focus-visible {
+  outline: 2px solid #3b82f6;           /* azul */
+  outline-offset: 2px;
+}
+
+/* Evita borde azul "feo" del click en algunos navegadores */
+.navbar a:focus {
+  outline: none;
+  box-shadow: none;
+}
+
+/* Activo (la página en la que estás) */
+.navbar a.active,
+.navbar a[aria-current="page"] {
+  background: #1d4ed8;                  /* azul */
+  color: #fff;
+  border-color: #1d4ed8;
+}
+
+/* ---- NAV LINKS (no descoloca nada) ---- */
+.navlink {
+  position: relative;
+  color: #e5e7eb;            /* gris claro */
+  text-decoration: none;
+  background: none;          /* Para botones */
+  border: none;              /* Para botones */
+  cursor: pointer;           /* Para botones */
+  padding: 8px 14px;         /* Espaciado consistente */
+  border-radius: 8px;        /* Bordes redondeados */
+  transition: all 0.2s ease; /* Transición suave */
+}
+
+.navlink:hover {
+  text-decoration: none;
+  background: rgba(255,255,255,0.08); /* feedback sutil opcional */
+  border-radius: 8px;
+}
+
+/* Activo: la raya fija bajo el tab */
+.navlink.active::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: -10px;
+  width: 100%;
+  height: 2px;
+  background: #ffffff;
+  border-radius: 1px;
+}
+
+/* foco accesible solo con teclado */
+.navlink:focus {
+  outline: none;
+}
+.navlink:focus-visible {
+  outline: 2px solid #ffffff;
+  outline-offset: 2px;
+}
+
+/* quita el flash azul en móviles */
+a, button { -webkit-tap-highlight-color: transparent; }
+
+/* ---- ESTILOS ESPECÍFICOS PARA LA NUEVA NAVEGACIÓN ---- */
+
+/* Asegurar que el nav funcione como flexbox */
+nav {
+  display: flex !important;
+  align-items: center !important;
+  width: 100% !important;
+}
+
+/* Clase para empujar elementos a la derecha */
+.ml-auto {
+  margin-left: auto !important;
+}
+
+/* Asegurar que los iconos se vean bien */
+.navlink svg {
+  transition: all 0.2s ease;
+}
+
+.navlink:hover svg {
+  transform: scale(1.1);
+}
+
+/* Para dispositivos móviles */
+@media (max-width: 768px) {
+  nav {
+    flex-wrap: wrap;
+  }
+  
+  .ml-auto {
+    margin-left: auto !important;
+    margin-top: 0 !important;
+  }
+}
+
+/* Forzar el comportamiento correcto del nav */
+nav {
+  display: flex !important;
+  align-items: center !important;
+  width: 100% !important;
+  justify-content: space-between !important;
+}
+
+/* Asegurar que el contenedor del menú se expanda */
+nav > div:nth-child(2) {
+  flex: 1 !important;
+  display: flex !important;
+  justify-content: center !important;
+}
+
+/* Asegurar que los botones de la derecha se mantengan ahí */
+nav > div:last-child {
+  display: flex !important;
+  align-items: center !important;
+  gap: 1rem !important;
+}
+
+/* Override cualquier estilo que pueda estar interfiriendo */
+.navlink {
+  position: relative;
+  color: #e5e7eb !important;
+  text-decoration: none;
+  background: none !important;
+  border: none !important;
+  cursor: pointer;
+  padding: 8px 14px !important;
+  border-radius: 8px;
+  transition: all 0.2s ease;
+}
+
+/* sombra suave coherente */
+.shadow-soft {
+  box-shadow:
+    0 1px 2px rgba(16, 24, 40, 0.04),
+    0 4px 12px rgba(16, 24, 40, 0.06);
+}
+
+/* Botones de selección (más visibles) */
+.seg-option {
+  padding: 12px 18px;
+  font-weight: 700;
+  font-size: 15px;
+  color: #1f2937;
+  background: #fff;
+  border: 2px solid #e5e7eb;
+  border-radius: 12px;
+  transition: all .15s ease;
+}
+.seg-option:hover { background: #f9fafb; border-color: #d1d5db; }
+.seg-option.seg-selected {
+  background: #1d4ed8;       /* azul cabecera */
+  border-color: #1d4ed8;
+  color: #fff;
+  box-shadow: 0 4px 10px rgba(29,78,216,.25);
+}
+
+/* Botones segmentados */
+.seg-btn-left,
+.seg-btn-right,
+.seg-alone {
+  padding: 10px 16px;
+  font-weight: 600;
+  font-size: 14px;
+  line-height: 1;
+  background: #fff;
+  color: #374151;
+  transition: all .15s ease;
+}
+
+.seg-btn-left { border-right: 1px solid #e5e7eb; }
+.seg-btn-right { border-left: 1px solid #e5e7eb; }
+
+.seg-btn-left:hover,
+.seg-btn-right:hover,
+.seg-alone:hover {
+  background: #f9fafb;
+}
+
+.seg-active {
+  background: #1d4ed8 !important;   /* azul cabecera */
+  color: #fff !important;
+}
+
+.seg-alone {
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+}
+
+/* ---- Dropzone grande, blanco puro y borde discontinuo ---- */
+.dropzone-wrap {
+  max-width: 720px;          /* ancho cómodo */
+  margin: 28px auto;         /* más separado arriba y abajo */
+}
+
+.dropzone {
+  background: #fff;          /* blanco puro */
+  border: 2px dashed #cbd5e1;/* línea discontinua */
+  border-radius: 12px;
+  min-height: 640px;         /* ~4x más grande que 160px */
+  padding: 40px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
+}
+
+.dropzone.dragover {
+  border-color: #1d4ed8;     /* azul de foco */
+  box-shadow: 0 6px 20px rgba(29, 78, 216, .15);
+}
+
+.dropzone p.title {
+  font-weight: 600;
+  color: #111827;
+  margin: 4px 0 6px;
+}
+.dropzone p.help {
+  color: #6b7280;
+  font-size: 0.95rem;
+  margin: 0;
+}
+
+/* Chip del archivo seleccionado */
+.file-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1e40af;
+  border: 1px solid #bfdbfe;
+  font-size: .9rem;
+  margin-top: 14px;
+}
+.file-chip button {
+  background: transparent;
+  border: 0;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  color: inherit;
+}
+
+/* Spinner minimalista para el botón */
+.spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255,255,255,0.6);
+  border-top-color: #fff;
+  border-radius: 50%;
+  display: inline-block;
+  animation: spin .7s linear infinite;
+  vertical-align: -2px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Estilo base para botones modales */
+.modal-btn {
+  @apply px-4 py-2 rounded-md font-medium transition-colors;
+  background: #f3f4f6;
+  color: #111827;
+}
+
+/* Cancelar con hover rojo */
+.modal-btn-cancel:hover {
+  background: #ef4444;
+  color: #fff;
+}
+
+/* Confirmar con hover verde */
+.modal-btn-confirm:hover {
+  background: #22c55e;
+  color: #fff;
 }

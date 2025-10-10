@@ -1,37 +1,140 @@
-from fastapi import APIRouter, HTTPException
+# app/routes/dashboard.py
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
-from typing import Optional
+from typing import List
+from decimal import Decimal
+import os
 import httpx
-from datetime import datetime
-
-SUPABASE_URL = "https://rzuyndmogkawqdstlnht.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJ6dXluZG1vZ2thd3Fkc3Rsbmh0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTM4OTA1ODMsImV4cCI6MjA2OTQ2NjU4M30.OaJpVhtgv564iQ8A3c7pPXhK3A4-v5D1geS2r1Kxymo"
+import logging
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
+logger = logging.getLogger(__name__)
 
-class DashboardData(BaseModel):
+class MesResumen(BaseModel):
+    anio: int
+    mes: int
     ventas_mes: float
     gastos_mes: float
     facturas_trimestre: int
 
-@router.get("/", response_model=DashboardData)
-async def get_dashboard():
-    headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
-    async with httpx.AsyncClient() as client:
-        # Ventas del mes
-        hoy = datetime.now()
-        mes = hoy.month
-        anio = hoy.year
-        ventas_url = f"{SUPABASE_URL}/rest/v1/ventas?select=TOTAL_PRICE_OF_ITEMS_AMT_VAT_INCL,TRANSACTION_COMPLETE_DATE"
-        ventas_resp = await client.get(ventas_url, headers=headers)
-        ventas = ventas_resp.json() if ventas_resp.status_code == 200 else []
-        ventas_mes = sum(v['TOTAL_PRICE_OF_ITEMS_AMT_VAT_INCL'] for v in ventas if datetime.fromisoformat(v['TRANSACTION_COMPLETE_DATE']).month == mes and datetime.fromisoformat(v['TRANSACTION_COMPLETE_DATE']).year == anio)
-        # Gastos del mes
-        gastos_url = f"{SUPABASE_URL}/rest/v1/facturas?select=TOTAL_PRICE_OF_ITEMS_AMT_VAT_INCL,TRANSACTION_COMPLETE_DATE"
-        gastos_resp = await client.get(gastos_url, headers=headers)
-        gastos = gastos_resp.json() if gastos_resp.status_code == 200 else []
-        gastos_mes = sum(f['TOTAL_PRICE_OF_ITEMS_AMT_VAT_INCL'] for f in gastos if datetime.fromisoformat(f['TRANSACTION_COMPLETE_DATE']).month == mes and datetime.fromisoformat(f['TRANSACTION_COMPLETE_DATE']).year == anio)
-        # Facturas subidas en el trimestre
-        trimestre = (mes - 1) // 3 + 1
-        facturas_trimestre = sum(1 for f in gastos if ((datetime.fromisoformat(f['TRANSACTION_COMPLETE_DATE']).month - 1) // 3 + 1) == trimestre and datetime.fromisoformat(f['TRANSACTION_COMPLETE_DATE']).year == anio)
-        return DashboardData(ventas_mes=ventas_mes, gastos_mes=gastos_mes, facturas_trimestre=facturas_trimestre)
+class DashboardResponse(BaseModel):
+    ultimos_seis_meses: List[MesResumen]
+
+def _to_float(x):
+    if x is None:
+        return 0.0
+    if isinstance(x, (int, float)):
+        return float(x)
+    try:
+        return float(Decimal(str(x)))
+    except Exception:
+        return 0.0
+
+@router.get("/", response_model=DashboardResponse)
+async def get_dashboard(
+    months: int = Query(6, ge=1, le=24),
+    tz: str = Query("Europe/Madrid")
+):
+    """
+    Devuelve agregados de los últimos `months` meses listos para el dashboard.
+    Llama al RPC `dashboard_ultimos_meses` en Supabase.
+    """
+    supabase_url = (os.getenv("SUPABASE_URL") or "").strip()
+    supabase_key = (os.getenv("SUPABASE_SERVICE_ROLE_KEY") or "").strip()
+
+    if not supabase_url or not supabase_key:
+        logger.error("Faltan variables de entorno: SUPABASE_URL o SUPABASE_SERVICE_ROLE_KEY")
+        raise HTTPException(status_code=500, detail="Faltan SUPABASE_URL o SUPABASE_SERVICE_ROLE_KEY")
+
+    rpc_url = f"{supabase_url}/rest/v1/rpc/dashboard_ultimos_meses"
+    headers = {
+        "apikey": supabase_key,
+        "Authorization": f"Bearer {supabase_key}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "Prefer": "return=representation",
+    }
+    payload = {"p_meses": months, "p_tz": tz}
+
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(rpc_url, headers=headers, json=payload)
+    except httpx.RequestError as e:
+        logger.exception("Error de red al llamar a Supabase")
+        raise HTTPException(status_code=502, detail=f"Error de red al llamar a Supabase: {e}") from e
+
+    if resp.status_code != 200:
+        # Propaga el error del RPC para depurar en front/logs
+        logger.error("RPC fallo %s: %s", resp.status_code, resp.text)
+        raise HTTPException(status_code=502, detail={"rpc_status": resp.status_code, "rpc_body": resp.text})
+
+    rows = resp.json() or []
+    logger.info("RPC dashboard_ultimos_meses devolvió %d filas (months=%d)", len(rows), months)
+    if rows:
+        logger.debug("Primera fila RPC: %s", rows[0])
+
+    data = [
+        MesResumen(
+            anio=int(r.get("anio")),
+            mes=int(r.get("mes")),
+            ventas_mes=_to_float(r.get("ventas_mes")),
+            gastos_mes=_to_float(r.get("gastos_mes")),
+            facturas_trimestre=int(r.get("facturas_trimestre") or 0),
+        )
+        for r in rows
+    ]
+    return DashboardResponse(ultimos_seis_meses=data)
+
+
+class HistoricoResponse(BaseModel):
+    items: list[dict]  # o crea un modelo Operacion
+
+@router.get("/historico", response_model=HistoricoResponse)
+async def historico(limit: int = 10):
+    supabase_url = (os.getenv("SUPABASE_URL") or "").strip()
+    supabase_key = (os.getenv("SUPABASE_SERVICE_ROLE_KEY") or "").strip()
+    if not supabase_url or not supabase_key:
+        logger.error("Faltan variables de entorno: SUPABASE_URL o SUPABASE_SERVICE_ROLE_KEY")
+        raise HTTPException(status_code=500, detail="Faltan SUPABASE_URL o SUPABASE_SERVICE_ROLE_KEY")
+    
+    rpc_url = f"{supabase_url}/rest/v1/rpc/dashboard_ultimas_ops"
+    headers = {
+        "apikey": supabase_key,
+        "Authorization": f"Bearer {supabase_key}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "Prefer": "return=representation",
+    }
+    payload = {"p_limit": limit, "p_tz": "Europe/Madrid"}
+
+    try:
+        #logger.info("URL enviado al RPC: %s", rpc_url)
+        logger.info("Payload enviado al RPC: %s", payload)
+        #logger.info("Payload enviado al RPC: %s", headers)
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(rpc_url, headers=headers, json=payload)
+        logger.info("Respuesta RPC %s: %s", resp.status_code, resp.text)
+    except httpx.RequestError as e:
+        logger.exception("Error de red al llamar a Supabase")
+        raise HTTPException(status_code=502, detail=f"Error de red al llamar a Supabase: {e}") from e
+
+    if resp.status_code != 200:
+        # Propaga el error del RPC para depurar en front/logs
+        logger.error("RPC fallo %s: %s", resp.status_code, resp.text)
+        raise HTTPException(status_code=502, detail={"rpc_status": resp.status_code, "rpc_body": resp.text})
+
+    rows = resp.json() or []
+    logger.info("RPC dashboard_historico devolvió %d filas (days=%d)", len(rows), limit)
+    if rows:
+        logger.debug("Primera fila RPC: %s", rows[0])
+    # normalizamos nombres por si quieres usarlos como en el front:
+    items = [
+        {
+            "tipo": r["tipo"],
+            "fecha": r["fecha"],
+            "descripcion": r["descripcion"],
+            "importe_eur": float(r["importe_eur"] or 0),
+        }
+        for r in rows
+    ]
+    return {"items": items}
