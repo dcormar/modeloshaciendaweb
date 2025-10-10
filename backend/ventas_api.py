@@ -1,12 +1,12 @@
 
 import httpx
-import logging
+import logging, os
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from typing import List, Optional
 
-SUPABASE_URL = "https://rzuyndmogkawqdstlnht.supabase.co"
-SUPABASE_KEY = "sb_secret_dUm0eji6_z3fiu6Z7vn2aQ_fbHKu5zA"
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/ventas", tags=["ventas"])
