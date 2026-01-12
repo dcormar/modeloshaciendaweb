@@ -134,6 +134,14 @@ export default function UploadPage({ token, onLogout }: Props) {
   const [retryingId, setRetryingId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const [showSuccess, setShowSuccess] = useState(false);
+  
+  // Modal de detalles
+  const [selectedOp, setSelectedOp] = useState<Operacion | null>(null);
+  const [showDetailsModal, setShowDetailsModal] = useState(false);
+  const [facturaData, setFacturaData] = useState<any | null>(null);
+  const [facturaId, setFacturaId] = useState<number | null>(null);
+  const [loadingFactura, setLoadingFactura] = useState(false);
+  const [facturaError, setFacturaError] = useState<string | null>(null);
 
   // overlay formulario manual
   const [showManualModal, setShowManualModal] = useState(false);
@@ -339,11 +347,109 @@ export default function UploadPage({ token, onLogout }: Props) {
         if (showTypeSelectionModal) {
           setShowTypeSelectionModal(false);
         }
+        if (showDetailsModal) {
+          setShowDetailsModal(false);
+          setSelectedOp(null);
+          setFacturaData(null);
+          setFacturaId(null);
+          setFacturaError(null);
+        }
       }
     };
     window.addEventListener("keydown", handleEsc);
     return () => window.removeEventListener("keydown", handleEsc);
-  }, [showManualModal, showTypeSelectionModal]);
+  }, [showManualModal, showTypeSelectionModal, showDetailsModal]);
+
+  // Abrir modal de detalles
+  const handleRowClick = async (op: Operacion) => {
+    console.log("🔵 [DEBUG] handleRowClick - Operación clickeada:", op);
+    console.log("🔵 [DEBUG] handleRowClick - ID del upload:", op.id);
+    console.log("🔵 [DEBUG] handleRowClick - Tipo:", op.tipo);
+    
+    setSelectedOp(op);
+    setShowDetailsModal(true);
+    setFacturaData(null);
+    setFacturaId(null);
+    setFacturaError(null);
+    
+    // Si es una factura, cargar los datos de la factura
+    if (op.tipo === "FACTURA" && token) {
+      const url = `http://localhost:8000/api/uploads/${op.id}/factura`;
+      console.log("🔵 [DEBUG] handleRowClick - URL del endpoint:", url);
+      console.log("🔵 [DEBUG] handleRowClick - Token disponible:", !!token);
+      
+      setLoadingFactura(true);
+      try {
+        console.log("🔵 [DEBUG] handleRowClick - Iniciando petición al backend...");
+        const response = await fetchWithAuth(
+          url,
+          {
+            token: token || undefined,
+            onLogout,
+          }
+        );
+        
+        console.log("🔵 [DEBUG] handleRowClick - Respuesta recibida, status:", response.status);
+        console.log("🔵 [DEBUG] handleRowClick - Response OK:", response.ok);
+        
+        if (response.ok) {
+          const data = await response.json();
+          console.log("🔵 [DEBUG] handleRowClick - Datos recibidos del backend:", data);
+          console.log("🔵 [DEBUG] handleRowClick - factura_id recibido:", data.factura_id);
+          console.log("🔵 [DEBUG] handleRowClick - factura recibida:", data.factura);
+          
+          setFacturaData(data.factura);
+          setFacturaId(data.factura_id);
+          setFacturaError(null);
+        } else {
+          const errorText = await response.text();
+          console.error("🔴 [DEBUG] handleRowClick - Error en respuesta, status:", response.status);
+          console.error("🔴 [DEBUG] handleRowClick - Error text:", errorText);
+          
+          let errorMessage = errorText;
+          try {
+            const errorJson = JSON.parse(errorText);
+            errorMessage = errorJson.detail || errorJson.message || errorText;
+            console.error("🔴 [DEBUG] handleRowClick - Error parseado:", errorMessage);
+          } catch {
+            // Si no es JSON, usar el texto directamente
+            console.error("🔴 [DEBUG] handleRowClick - Error no es JSON, usando texto directo");
+          }
+          setFacturaError(errorMessage);
+          console.error("Error cargando factura:", errorMessage);
+        }
+      } catch (err: any) {
+        console.error("🔴 [DEBUG] handleRowClick - Excepción capturada:", err);
+        console.error("🔴 [DEBUG] handleRowClick - Tipo de error:", typeof err);
+        console.error("🔴 [DEBUG] handleRowClick - Mensaje de error:", err?.message);
+        
+        const errorMessage = err?.message || String(err) || "Error desconocido al cargar la factura";
+        setFacturaError(errorMessage);
+        console.error("Error cargando factura:", err);
+      } finally {
+        console.log("🔵 [DEBUG] handleRowClick - Finalizando carga, setting loadingFactura = false");
+        setLoadingFactura(false);
+      }
+    } else {
+      console.log("🔵 [DEBUG] handleRowClick - No es FACTURA o no hay token");
+      console.log("🔵 [DEBUG] handleRowClick - Tipo:", op.tipo, "Token:", !!token);
+    }
+  };
+
+  // Abrir archivo en Google Drive
+  const handleOpenFile = (url: string) => {
+    if (!url) {
+      alert("Archivo no disponible");
+      return;
+    }
+
+    // ubicacion_factura contiene la URL de Google Drive
+    const fileUrl = url.trim();
+    console.log("Abriendo archivo con URL:", fileUrl);
+    
+    // Abrir directamente la URL de Google Drive
+    window.open(fileUrl, "_blank", "noopener,noreferrer");
+  };
 
   const handleManualSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1416,7 +1522,21 @@ export default function UploadPage({ token, onLogout }: Props) {
             </thead>
             <tbody>
               {ops.map((op) => (
-                <tr key={op.id} style={{ borderBottom: "1px solid #eef2f7" }}>
+                <tr 
+                  key={op.id} 
+                  style={{ 
+                    borderBottom: "1px solid #eef2f7",
+                    cursor: "pointer",
+                    transition: "background-color 0.2s ease",
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = "#f3f4f6";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = "transparent";
+                  }}
+                  onClick={() => handleRowClick(op)}
+                >
                   <td style={{ ...td, textAlign: "center" }}>
                     {new Date(op.fecha).toLocaleString("es-ES")}
                   </td>
@@ -1506,7 +1626,7 @@ export default function UploadPage({ token, onLogout }: Props) {
               {ops.length === 0 && !opsError && (
                 <tr>
                   <td
-                    colSpan={5}
+                    colSpan={6}
                     style={{
                       ...td,
                       textAlign: "center",
@@ -1521,6 +1641,306 @@ export default function UploadPage({ token, onLogout }: Props) {
           </table>
         </div>
       </section>
+
+      {/* Modal de detalles de la operación */}
+      {showDetailsModal && selectedOp && (
+        <div
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setShowDetailsModal(false);
+              setSelectedOp(null);
+              setFacturaData(null);
+              setFacturaId(null);
+              setFacturaError(null);
+            }
+          }}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col"
+            style={{
+              boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)",
+            }}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between p-6 border-b border-gray-200">
+              <h2 
+                className="text-2xl font-bold"
+                style={{
+                  background: "linear-gradient(135deg, #3631a3 0%, #092342 100%)",
+                  WebkitBackgroundClip: "text",
+                  WebkitTextFillColor: "transparent",
+                  backgroundClip: "text",
+                }}
+              >
+                Detalles de {selectedOp.tipo === "FACTURA" ? "Factura" : "Venta"}
+              </h2>
+              <button
+                onClick={() => {
+                  setShowDetailsModal(false);
+                  setSelectedOp(null);
+                  setFacturaData(null);
+                  setFacturaId(null);
+                  setFacturaError(null);
+                }}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+                style={{
+                  fontSize: "24px",
+                  lineHeight: "1",
+                  padding: "4px",
+                  cursor: "pointer",
+                }}
+                aria-label="Cerrar"
+              >
+                ×
+              </button>
+            </div>
+
+            {/* Contenido scrolleable */}
+            <div className="overflow-y-auto p-6" style={{ maxHeight: "calc(90vh - 180px)" }}>
+              {/* ID de factura en la parte superior izquierda */}
+              {selectedOp.tipo === "FACTURA" && facturaId && (
+                <div className="mb-4">
+                  <span className="text-xs text-gray-400 font-mono">
+                    ID Factura: {facturaId}
+                  </span>
+                </div>
+              )}
+              
+              {loadingFactura ? (
+                <div className="flex items-center justify-center py-8">
+                  <div 
+                    style={{
+                      width: "32px",
+                      height: "32px",
+                      border: "3px solid #0875bb",
+                      borderTopColor: "transparent",
+                      borderRadius: "50%",
+                      animation: "spin 1s linear infinite",
+                    }}
+                  />
+                  <span className="ml-3 text-gray-600">Cargando datos de la factura...</span>
+                </div>
+              ) : selectedOp.tipo === "FACTURA" && facturaData ? (
+                <div className="space-y-4">
+                  {/* Fecha */}
+                  <div>
+                    <label className="text-sm font-semibold text-gray-600 block mb-1">
+                      Fecha
+                    </label>
+                    <p className="text-gray-900">
+                      {facturaData.fecha_dt 
+                        ? new Date(facturaData.fecha_dt).toLocaleDateString("es-ES", {
+                            year: "numeric",
+                            month: "long",
+                            day: "numeric",
+                          })
+                        : facturaData.fecha || "—"}
+                    </p>
+                  </div>
+
+                  {/* Proveedor */}
+                  <div>
+                    <label className="text-sm font-semibold text-gray-600 block mb-1">
+                      Proveedor
+                    </label>
+                    <p className="text-gray-900">{facturaData.proveedor || "—"}</p>
+                  </div>
+
+                  {/* VAT Number */}
+                  {facturaData.supplier_vat_number && (
+                    <div>
+                      <label className="text-sm font-semibold text-gray-600 block mb-1">
+                        VAT del proveedor
+                      </label>
+                      <p className="text-gray-900">{facturaData.supplier_vat_number}</p>
+                    </div>
+                  )}
+
+                  {/* Importe sin IVA local */}
+                  {facturaData.importe_sin_iva_local != null && (
+                    <div>
+                      <label className="text-sm font-semibold text-gray-600 block mb-1">
+                        Importe sin IVA (local)
+                      </label>
+                      <p className="text-gray-900">
+                        {facturaData.importe_sin_iva_local.toFixed(2)} {facturaData.moneda || "EUR"}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* IVA local */}
+                  {facturaData.iva_local != null && (
+                    <div>
+                      <label className="text-sm font-semibold text-gray-600 block mb-1">
+                        % IVA local
+                      </label>
+                      <p className="text-gray-900">{facturaData.iva_local}%</p>
+                    </div>
+                  )}
+
+                  {/* Total moneda local */}
+                  {facturaData.total_moneda_local != null && (
+                    <div>
+                      <label className="text-sm font-semibold text-gray-600 block mb-1">
+                        Total en moneda local
+                      </label>
+                      <p className="text-gray-900">
+                        {facturaData.total_moneda_local.toFixed(2)} {facturaData.moneda || "EUR"}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Moneda */}
+                  {facturaData.moneda && (
+                    <div>
+                      <label className="text-sm font-semibold text-gray-600 block mb-1">
+                        Moneda
+                      </label>
+                      <p className="text-gray-900">{facturaData.moneda}</p>
+                    </div>
+                  )}
+
+                  {/* Tarifa de cambio */}
+                  {facturaData.tarifa_cambio != null && (
+                    <div>
+                      <label className="text-sm font-semibold text-gray-600 block mb-1">
+                        Tarifa de cambio (€/moneda local)
+                      </label>
+                      <p className="text-gray-900">{facturaData.tarifa_cambio.toFixed(4)}</p>
+                    </div>
+                  )}
+
+                  {/* Importe sin IVA (EUR) */}
+                  {facturaData.importe_sin_iva_euro != null && (
+                    <div>
+                      <label className="text-sm font-semibold text-gray-600 block mb-1">
+                        Importe sin IVA (EUR)
+                      </label>
+                      <p className="text-gray-900 font-semibold">
+                        {facturaData.importe_sin_iva_euro.toFixed(2)} EUR
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Importe total (EUR) */}
+                  {facturaData.importe_total_euro != null && (
+                    <div>
+                      <label className="text-sm font-semibold text-gray-600 block mb-1">
+                        Importe total (EUR)
+                      </label>
+                      <p className="text-gray-900 font-semibold text-lg">
+                        {facturaData.importe_total_euro.toFixed(2)} EUR
+                      </p>
+                    </div>
+                  )}
+
+                  {/* País origen */}
+                  {facturaData.pais_origen && (
+                    <div>
+                      <label className="text-sm font-semibold text-gray-600 block mb-1">
+                        País de origen
+                      </label>
+                      <p className="text-gray-900">{facturaData.pais_origen}</p>
+                    </div>
+                  )}
+
+                  {/* ID externo */}
+                  {facturaData.id_ext && (
+                    <div>
+                      <label className="text-sm font-semibold text-gray-600 block mb-1">
+                        ID externo
+                      </label>
+                      <p className="text-gray-900">{facturaData.id_ext}</p>
+                    </div>
+                  )}
+
+                  {/* Categoría */}
+                  {facturaData.categoria && (
+                    <div>
+                      <label className="text-sm font-semibold text-gray-600 block mb-1">
+                        Categoría
+                      </label>
+                      <p className="text-gray-900">{facturaData.categoria}</p>
+                    </div>
+                  )}
+
+                  {/* Descripción */}
+                  {facturaData.descripcion && (
+                    <div>
+                      <label className="text-sm font-semibold text-gray-600 block mb-1">
+                        Descripción
+                      </label>
+                      <p className="text-gray-900 break-words">{facturaData.descripcion}</p>
+                    </div>
+                  )}
+
+                  {/* Notas */}
+                  {facturaData.notas && (
+                    <div>
+                      <label className="text-sm font-semibold text-gray-600 block mb-1">
+                        Notas
+                      </label>
+                      <p className="text-gray-900 break-words">{facturaData.notas}</p>
+                    </div>
+                  )}
+
+                  {/* Enlace al archivo */}
+                  {facturaData.ubicacion_factura && (
+                    <div>
+                      <label className="text-sm font-semibold text-gray-600 block mb-1">
+                        Archivo
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => handleOpenFile(facturaData.ubicacion_factura)}
+                        className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#0875bb] text-white hover:bg-[#065a8f] transition-colors"
+                      >
+                        <span>📄</span>
+                        <span>Ver archivo en Google Drive</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ) : selectedOp.tipo === "FACTURA" && !loadingFactura ? (
+                <div className="text-center py-8 text-gray-500">
+                  <p>No se encontraron datos de la factura.</p>
+                  <p className="text-sm mt-2">La factura puede estar aún procesándose.</p>
+                  {!facturaId && (
+                    <p className="text-xs mt-2 text-gray-400">La factura aún no tiene un ID asignado.</p>
+                  )}
+                  {facturaError && (
+                    <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg text-left">
+                      <p className="text-xs font-semibold text-red-700 mb-1">Error técnico:</p>
+                      <p className="text-xs text-red-600 font-mono break-words">{facturaError}</p>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="text-center py-8 text-gray-500">
+                    <p>Los detalles de ventas no están disponibles en este momento.</p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="flex justify-end gap-3 p-6 border-t border-gray-200 bg-gray-50">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowDetailsModal(false);
+                  setSelectedOp(null);
+                }}
+                className="px-5 py-2 rounded-lg bg-[#0875bb] text-white hover:bg-[#065a8f] transition-colors font-medium"
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

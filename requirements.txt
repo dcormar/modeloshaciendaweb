@@ -26,3 +26,6 @@ pydantic-settings==2.7.0
 
 # Crypto
 cryptography==43.0.3
+
+# PDF Generation
+reportlab==4.0.9

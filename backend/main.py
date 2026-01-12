@@ -13,6 +13,7 @@ from dashboard_api import router as dashboard_router
 from modelos_api import router as modelos_router
 from upload_api import router as upload_router
 from upload_historico_api import router as upload_historico_router
+from generate_invoice_api import router as generate_invoice_router
 from contextlib import asynccontextmanager
 
 
@@ -91,6 +92,7 @@ app.include_router(dashboard_router)
 app.include_router(modelos_router)
 app.include_router(upload_router)
 app.include_router(upload_historico_router)
+app.include_router(generate_invoice_router)
 
 logger.info("Routers montados y aplicación FastAPI iniciada")
 

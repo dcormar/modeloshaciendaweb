@@ -4,6 +4,7 @@ import DashboardPage from './pages/DashboardPage'
 import UploadPage from './pages/UploadPage'
 import EstadoModelosPage from './pages/EstadoModelosPage'
 import MesDetallePage from './pages/MesDetallePage'
+import CreateInvoicePage from './pages/CreateInvoicePage'
 import './App.css'
 
 // Importamos el logo desde src/assets
@@ -119,6 +120,13 @@ function App() {
               Histórico
             </button>
             <button
+              onClick={() => setPage('crear-factura')}
+              className={`navlink ${page === 'crear-factura' ? 'active' : ''}`}
+              aria-current={page === 'crear-factura' ? 'page' : undefined}
+            >
+              Crear Facturas
+            </button>
+            <button
               onClick={() => setPage('mesdetalle')}
               className={`navlink ${page === 'mesdetalle' ? 'active' : ''}`}
               aria-current={page === 'mesdetalle' ? 'page' : undefined}
@@ -164,6 +172,7 @@ function App() {
         {page === 'upload' && <UploadPage token={token} onLogout={handleLogout} />}
         {page === 'estado' && <EstadoModelosPage token={token} onLogout={handleLogout} />}
         {page === 'mesdetalle' && <MesDetallePage token={token} onLogout={handleLogout} />}
+        {page === 'crear-factura' && <CreateInvoicePage token={token} onLogout={handleLogout} />}
       </main>
     </div>
   )
