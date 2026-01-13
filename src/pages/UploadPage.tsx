@@ -9,6 +9,7 @@ type DocType = "factura" | "venta";
 /** /api/uploads/historico */
 type UploadStatus =
   | "UPLOADED"
+  | "QUEUED"
   | "PROCESSING"
   | "PROCESSING_AI"
   | "AI_COMPLETED"
@@ -2081,28 +2082,198 @@ export default function UploadPage({ token, onLogout }: Props) {
                       : "-"}
                   </td>
                   <td style={{ ...td, textAlign: "center" }}>
-                    {op.status === "FAILED" ? (
-                      <button
-                        onClick={() => retryWebhook(op)}
-                        disabled={retryingId === op.id}
-                        className="px-3 py-1 rounded-lg text-white"
-                        style={{
-                          backgroundColor:
-                            retryingId === op.id ? "#94a3b8" : "#1d4ed8",
-                          cursor:
-                            retryingId === op.id
-                              ? "not-allowed"
-                              : "pointer",
-                        }}
-                        title="Reintentar envío al procesador"
-                      >
-                        {retryingId === op.id
-                          ? "Reintentando…"
-                          : "Reintentar"}
-                      </button>
-                    ) : (
-                      <span style={{ color: "#94a3b8" }}>—</span>
-                    )}
+                    {(() => {
+                      const status = op.status;
+                      switch (status) {
+                        case "UPLOADED":
+                        case "QUEUED":
+                          return (
+                            <span 
+                              style={{ 
+                                display: "inline-flex", 
+                                alignItems: "center", 
+                                gap: 4, 
+                                color: "#f59e0b",
+                                fontSize: 12,
+                                fontWeight: 500
+                              }}
+                              title="Pendiente de procesar con IA"
+                            >
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <circle cx="12" cy="12" r="10"/>
+                                <polyline points="12,6 12,12 16,14"/>
+                              </svg>
+                              Pendiente IA
+                            </span>
+                          );
+                        case "PROCESSING_AI":
+                        case "PROCESSING":
+                          return (
+                            <span 
+                              style={{ 
+                                display: "inline-flex", 
+                                alignItems: "center", 
+                                gap: 4, 
+                                color: "#3b82f6",
+                                fontSize: 12,
+                                fontWeight: 500
+                              }}
+                              title="Procesando con IA..."
+                            >
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ animation: "spin 1s linear infinite" }}>
+                                <path d="M21 12a9 9 0 11-6.219-8.56"/>
+                              </svg>
+                              Procesando IA...
+                            </span>
+                          );
+                        case "AI_COMPLETED":
+                          return (
+                            <span 
+                              style={{ 
+                                display: "inline-flex", 
+                                alignItems: "center", 
+                                gap: 4, 
+                                color: "#f59e0b",
+                                fontSize: 12,
+                                fontWeight: 500
+                              }}
+                              title="Pendiente de subir a Drive"
+                            >
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                                <polyline points="17,8 12,3 7,8"/>
+                                <line x1="12" y1="3" x2="12" y2="15"/>
+                              </svg>
+                              Pendiente Drive
+                            </span>
+                          );
+                        case "UPLOADING_DRIVE":
+                          return (
+                            <span 
+                              style={{ 
+                                display: "inline-flex", 
+                                alignItems: "center", 
+                                gap: 4, 
+                                color: "#3b82f6",
+                                fontSize: 12,
+                                fontWeight: 500
+                              }}
+                              title="Subiendo a Drive..."
+                            >
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ animation: "spin 1s linear infinite" }}>
+                                <path d="M21 12a9 9 0 11-6.219-8.56"/>
+                              </svg>
+                              Subiendo...
+                            </span>
+                          );
+                        case "COMPLETED":
+                        case "PROCESSED":
+                          return (
+                            <span 
+                              style={{ 
+                                display: "inline-flex", 
+                                alignItems: "center", 
+                                gap: 4, 
+                                color: "#22c55e",
+                                fontSize: 12,
+                                fontWeight: 500
+                              }}
+                              title="Procesamiento completado"
+                            >
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                                <polyline points="20,6 9,17 4,12"/>
+                              </svg>
+                              Completado
+                            </span>
+                          );
+                        case "FAILED_AI":
+                          return (
+                            <span 
+                              style={{ 
+                                display: "inline-flex", 
+                                alignItems: "center", 
+                                gap: 4, 
+                                color: "#ef4444",
+                                fontSize: 12,
+                                fontWeight: 500
+                              }}
+                              title="Error en procesamiento IA"
+                            >
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <circle cx="12" cy="12" r="10"/>
+                                <line x1="15" y1="9" x2="9" y2="15"/>
+                                <line x1="9" y1="9" x2="15" y2="15"/>
+                              </svg>
+                              Error IA
+                            </span>
+                          );
+                        case "FAILED_DRIVE":
+                          return (
+                            <span 
+                              style={{ 
+                                display: "inline-flex", 
+                                alignItems: "center", 
+                                gap: 4, 
+                                color: "#ef4444",
+                                fontSize: 12,
+                                fontWeight: 500
+                              }}
+                              title="Error al subir a Drive"
+                            >
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <circle cx="12" cy="12" r="10"/>
+                                <line x1="15" y1="9" x2="9" y2="15"/>
+                                <line x1="9" y1="9" x2="15" y2="15"/>
+                              </svg>
+                              Error Drive
+                            </span>
+                          );
+                        case "FAILED":
+                          return (
+                            <span 
+                              style={{ 
+                                display: "inline-flex", 
+                                alignItems: "center", 
+                                gap: 4, 
+                                color: "#ef4444",
+                                fontSize: 12,
+                                fontWeight: 500
+                              }}
+                              title="Error en el procesamiento"
+                            >
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <circle cx="12" cy="12" r="10"/>
+                                <line x1="15" y1="9" x2="9" y2="15"/>
+                                <line x1="9" y1="9" x2="15" y2="15"/>
+                              </svg>
+                              Error
+                            </span>
+                          );
+                        case "DUPLICATED":
+                          return (
+                            <span 
+                              style={{ 
+                                display: "inline-flex", 
+                                alignItems: "center", 
+                                gap: 4, 
+                                color: "#eab308",
+                                fontSize: 12,
+                                fontWeight: 500
+                              }}
+                              title="Archivo duplicado"
+                            >
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+                                <line x1="12" y1="9" x2="12" y2="13"/>
+                                <line x1="12" y1="17" x2="12.01" y2="17"/>
+                              </svg>
+                              Duplicado
+                            </span>
+                          );
+                        default:
+                          return <span style={{ color: "#94a3b8" }}>—</span>;
+                      }
+                    })()}
                   </td>
                 </tr>
               ))}
@@ -2410,6 +2581,41 @@ export default function UploadPage({ token, onLogout }: Props) {
 
             {/* Footer */}
             <div className="flex justify-end gap-3 p-6 border-t border-gray-200 bg-gray-50">
+              {/* Botón Continuar proceso - solo si está pendiente */}
+              {selectedOp && ["UPLOADED", "QUEUED", "AI_COMPLETED", "FAILED_AI", "FAILED_DRIVE"].includes(selectedOp.status || "") && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const status = selectedOp.status;
+                    const uploadId = selectedOp.id;
+                    const fileName = selectedOp.original_filename;
+                    
+                    // Cerrar modal de detalles
+                    setShowDetailsModal(false);
+                    setSelectedOp(null);
+                    
+                    // Configurar el flujo de procesamiento
+                    setCurrentUploadId(uploadId);
+                    setCurrentFileName(fileName);
+                    
+                    // Determinar en qué paso continuar
+                    if (status === "UPLOADED" || status === "QUEUED" || status === "FAILED_AI") {
+                      setProcessingStep("confirm_ai");
+                    } else if (status === "AI_COMPLETED" || status === "FAILED_DRIVE") {
+                      // Para estos estados, necesitamos cargar ai_result si existe
+                      setProcessingStep("confirm_drive");
+                    }
+                  }}
+                  className="px-5 py-2 rounded-lg bg-amber-500 text-white hover:bg-amber-600 transition-colors font-medium inline-flex items-center gap-2"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <polygon points="5,3 19,12 5,21 5,3"/>
+                  </svg>
+                  {selectedOp.status === "UPLOADED" || selectedOp.status === "QUEUED" || selectedOp.status === "FAILED_AI" 
+                    ? "Procesar con IA" 
+                    : "Subir a Drive"}
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => {

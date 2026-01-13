@@ -41,14 +41,14 @@ Campos a extraer:
     • Material de oficina
     • Otros (especificar en notas)
 - proveedor: nombre de la empresa o persona que emitió la factura (NO es David Cortijo Martín, sino la entidad emisora)
-- descripcion: breve explicación del producto o servicio prestado, en español
+- descripcion: breve explicación del producto o servicio prestado. IMPORTANTE: SIEMPRE traducir al español, aunque la factura esté en otro idioma
 - importe_sin_iva: precio neto total antes de IVA (número con punto decimal, sin símbolos de moneda. Ej: 1200.00)
 - iva_porcentaje: porcentaje de IVA aplicado (número. Ej: 21). Si no hay IVA, usar 0
 - importe_total: importe total con IVA incluido (número con punto decimal, sin símbolos de moneda. Ej: 1452.00)
 - moneda: código de moneda ISO en mayúsculas (EUR, USD, GBP, etc.)
 - tipo_cambio: ratio Euro/moneda local si aparece en el documento, o null si la moneda es EUR
 - pais_origen: país desde el que se emite la factura, en formato ISO 3166-2 (ES, FR, DE, etc.)
-- notas: cualquier anotación relevante para contabilidad o aclaraciones, en español. Si no aplica, usa "N/A"
+- notas: cualquier anotación relevante para contabilidad o aclaraciones, siempre en idioma español. Si no aplica, usa "N/A"
 
 Ejemplo de respuesta esperada:
 {"tipo": "factura", "id_factura": "FAC-2024-001", "proveedor_vat": "B12345678", "fecha": "15/01/2024", "categoria": "Software", "proveedor": "Empresa S.L.", "descripcion": "Licencia anual de software", "importe_sin_iva": 100.00, "iva_porcentaje": 21, "importe_total": 121.00, "moneda": "EUR", "tipo_cambio": null, "pais_origen": "ES", "notas": "N/A"}
@@ -56,7 +56,8 @@ Ejemplo de respuesta esperada:
 IMPORTANTE:
 - Responde ÚNICAMENTE con el JSON, sin texto adicional ni markdown.
 - Ningún campo debe quedar vacío: usa "N/A" donde no haya datos.
-- Mantén el orden exacto de los campos."""
+- Mantén el orden exacto de los campos.
+- Los campos "descripcion" y "notas" DEBEN estar SIEMPRE en español, traducidos si es necesario."""
 
 
 def _parse_json_response(text: str) -> dict:

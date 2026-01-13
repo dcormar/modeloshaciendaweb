@@ -88,6 +88,117 @@ async def update_factura(factura_id: int, data: dict) -> None:
         logger.warning("Error actualizando factura %s: %s", factura_id, resp.text)
 
 
+async def create_or_update_factura(ai_data: dict) -> int | None:
+    """
+    Crea o actualiza un registro en la tabla facturas con los datos extraídos por IA.
+    
+    Args:
+        ai_data: Diccionario con los datos extraídos de la factura
+        
+    Returns:
+        El ID del registro creado/actualizado, o None si falla
+    """
+    from datetime import datetime
+    
+    # Mapear campos de ai_data a la estructura de facturas
+    id_ext = ai_data.get("id_factura", "").strip() if ai_data.get("id_factura") else None
+    
+    if not id_ext:
+        logger.warning("No se puede crear factura: falta id_factura en ai_data")
+        return None
+    
+    # Parsear fecha de DD/MM/YYYY a diferentes formatos
+    fecha_str = ai_data.get("fecha", "")
+    fecha_txt = None
+    fecha_iso = None
+    
+    if fecha_str:
+        try:
+            dt = datetime.strptime(fecha_str, "%d/%m/%Y")
+            fecha_txt = fecha_str  # Mantener formato original para campo texto
+            fecha_iso = dt.strftime("%Y-%m-%d")  # ISO para campo date
+        except ValueError:
+            fecha_txt = fecha_str
+    
+    # Construir fila para facturas
+    factura_row = {
+        "id_ext": id_ext,
+        "supplier_vat_number": ai_data.get("proveedor_vat") if ai_data.get("proveedor_vat") != "N/A" else None,
+        "fecha": fecha_txt,
+        "proveedor": ai_data.get("proveedor"),
+        "categoria": ai_data.get("categoria"),
+        "descripcion": ai_data.get("descripcion") or "Sin descripción",
+        "moneda": ai_data.get("moneda", "EUR"),
+        "tarifa_cambio": ai_data.get("tipo_cambio"),
+        "pais_origen": ai_data.get("pais_origen"),
+        "notas": ai_data.get("notas") if ai_data.get("notas") != "N/A" else None,
+        "importe_sin_iva_local": ai_data.get("importe_sin_iva"),
+        "iva_local": ai_data.get("iva_porcentaje"),
+        "total_moneda_local": ai_data.get("importe_total"),
+    }
+    
+    # Añadir fecha_dt si se parseó correctamente
+    if fecha_iso:
+        factura_row["fecha_dt"] = fecha_iso
+    
+    # Calcular importes en EUR si hay tipo de cambio
+    tipo_cambio = ai_data.get("tipo_cambio")
+    if tipo_cambio and ai_data.get("moneda") != "EUR":
+        importe_sin_iva = ai_data.get("importe_sin_iva")
+        importe_total = ai_data.get("importe_total")
+        if importe_sin_iva:
+            factura_row["importe_sin_iva_euro"] = round(importe_sin_iva / tipo_cambio, 2)
+        if importe_total:
+            factura_row["importe_total_euro"] = round(importe_total / tipo_cambio, 2)
+    elif ai_data.get("moneda") == "EUR":
+        # Si ya está en EUR, copiar los valores
+        factura_row["importe_sin_iva_euro"] = ai_data.get("importe_sin_iva")
+        factura_row["importe_total_euro"] = ai_data.get("importe_total")
+    
+    # Upsert: si existe id_ext, actualizar; si no, crear
+    # Usamos on_conflict para manejar duplicados
+    url = f"{SUPABASE_URL}/rest/v1/facturas"
+    headers = supabase_headers({"Prefer": "return=representation"})
+    
+    try:
+        async with httpx.AsyncClient(timeout=20, verify=certifi.where()) as client:
+            # Primero intentar insertar
+            resp = await client.post(url, headers=headers, json=factura_row)
+            
+            if resp.status_code in (200, 201):
+                body = resp.json()
+                if isinstance(body, list) and body:
+                    factura_id = body[0].get("id")
+                    logger.info("Factura creada con ID: %s", factura_id)
+                    return factura_id
+                elif isinstance(body, dict):
+                    factura_id = body.get("id")
+                    logger.info("Factura creada con ID: %s", factura_id)
+                    return factura_id
+            
+            # Si falla por duplicado (código 409 o error de constraint), buscar la existente
+            if resp.status_code == 409 or "duplicate" in resp.text.lower() or "unique" in resp.text.lower():
+                logger.info("Factura con id_ext=%s ya existe, buscando...", id_ext)
+                # Buscar factura existente
+                search_resp = await client.get(
+                    f"{SUPABASE_URL}/rest/v1/facturas?id_ext=eq.{id_ext}&select=id",
+                    headers=supabase_headers()
+                )
+                if search_resp.status_code == 200:
+                    rows = search_resp.json()
+                    if rows:
+                        factura_id = rows[0].get("id")
+                        logger.info("Factura existente encontrada con ID: %s", factura_id)
+                        return factura_id
+            
+            logger.error("Error creando factura: %s - %s", resp.status_code, resp.text)
+            return None
+            
+    except Exception as e:
+        logger.exception("Error en create_or_update_factura: %s", e)
+        return None
+
+
 # =========================
 #   ENDPOINTS
 # =========================
@@ -138,17 +249,25 @@ async def start_ai_processing(
         logger.info("Iniciando extracción con Gemini para upload %s", upload_id)
         ai_data = await extract_invoice_data(storage_path)
         
-        # 5a. Éxito: guardar resultado y actualizar status
-        await update_upload(upload_id, {
+        # 5a. Éxito: crear/actualizar factura con los datos extraídos
+        factura_id = await create_or_update_factura(ai_data)
+        
+        # 5b. Guardar resultado y vincular con factura
+        update_data = {
             "status": "AI_COMPLETED",
             "ai_result": ai_data,
-        })
+        }
+        if factura_id:
+            update_data["factura_id"] = factura_id
         
-        logger.info("Procesamiento IA completado para upload %s", upload_id)
+        await update_upload(upload_id, update_data)
+        
+        logger.info("Procesamiento IA completado para upload %s, factura_id=%s", upload_id, factura_id)
         return {
             "success": True,
             "status": "AI_COMPLETED",
             "ai_data": ai_data,
+            "factura_id": factura_id,
             "error": None,
         }
         

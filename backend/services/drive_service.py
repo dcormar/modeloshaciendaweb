@@ -1,14 +1,17 @@
 # drive_service.py
-# Servicio para subir archivos a Google Drive
+# Servicio para subir archivos a Google Drive usando OAuth2
 
 import os
 import logging
 import re
+import json
 from pathlib import Path
 from typing import Optional
 from datetime import datetime
 
-from google.oauth2 import service_account
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from googleapiclient.errors import HttpError
@@ -17,34 +20,119 @@ logger = logging.getLogger(__name__)
 
 # Configuración
 GOOGLE_DRIVE_CREDENTIALS_FILE = os.getenv("GOOGLE_DRIVE_CREDENTIALS_FILE", "").strip()
+GOOGLE_DRIVE_TOKEN_FILE = os.getenv("GOOGLE_DRIVE_TOKEN_FILE", "credentials/drive-token.json").strip()
 GOOGLE_DRIVE_FOLDER_ID = os.getenv("GOOGLE_DRIVE_FOLDER_ID", "").strip()
 
 # Scopes necesarios para subir archivos
 SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 
 
+def _get_credentials_path() -> Path:
+    """Obtiene la ruta al archivo de credenciales OAuth2"""
+    if GOOGLE_DRIVE_CREDENTIALS_FILE:
+        return Path(GOOGLE_DRIVE_CREDENTIALS_FILE)
+    # Ruta por defecto
+    return Path(__file__).parent.parent / "credentials" / "drive-oauth-credentials.json"
+
+
+def _get_token_path() -> Path:
+    """Obtiene la ruta al archivo de token"""
+    if GOOGLE_DRIVE_TOKEN_FILE:
+        path = Path(GOOGLE_DRIVE_TOKEN_FILE)
+        if not path.is_absolute():
+            path = Path(__file__).parent.parent / path
+        return path
+    return Path(__file__).parent.parent / "credentials" / "drive-token.json"
+
+
 def _get_drive_service():
     """
-    Crea y devuelve un servicio de Google Drive autenticado.
+    Crea y devuelve un servicio de Google Drive autenticado con OAuth2.
+    
+    El flujo de autenticación:
+    1. Si existe un token guardado y es válido, lo usa
+    2. Si el token expiró pero tiene refresh_token, lo renueva
+    3. Si no hay token, inicia el flujo de autorización (abre navegador)
     """
-    if not GOOGLE_DRIVE_CREDENTIALS_FILE:
-        raise ValueError("GOOGLE_DRIVE_CREDENTIALS_FILE no está configurada")
+    creds = None
+    token_path = _get_token_path()
+    credentials_path = _get_credentials_path()
     
-    if not Path(GOOGLE_DRIVE_CREDENTIALS_FILE).exists():
+    # DEBUG: Mostrar rutas y contenido
+    logger.info(f"[DEBUG] GOOGLE_DRIVE_CREDENTIALS_FILE env: '{GOOGLE_DRIVE_CREDENTIALS_FILE}'")
+    logger.info(f"[DEBUG] Ruta de credenciales calculada: {credentials_path}")
+    logger.info(f"[DEBUG] Ruta de token calculada: {token_path}")
+    logger.info(f"[DEBUG] Archivo de credenciales existe: {credentials_path.exists()}")
+    
+    # Verificar que existe el archivo de credenciales OAuth
+    if not credentials_path.exists():
         raise FileNotFoundError(
-            f"Archivo de credenciales no encontrado: {GOOGLE_DRIVE_CREDENTIALS_FILE}"
+            f"Archivo de credenciales OAuth2 no encontrado: {credentials_path}\n"
+            "Descarga las credenciales de Google Cloud Console (OAuth 2.0 Client IDs)"
         )
     
+    # DEBUG: Leer y mostrar las claves del JSON
     try:
-        credentials = service_account.Credentials.from_service_account_file(
-            GOOGLE_DRIVE_CREDENTIALS_FILE,
-            scopes=SCOPES
-        )
-        service = build("drive", "v3", credentials=credentials)
+        import json
+        with open(credentials_path, 'r') as f:
+            creds_json = json.load(f)
+        logger.info(f"[DEBUG] Claves en el JSON de credenciales: {list(creds_json.keys())}")
+        if 'installed' in creds_json:
+            logger.info("[DEBUG] ✓ Formato correcto: 'installed' (OAuth2 Desktop)")
+        elif 'web' in creds_json:
+            logger.info("[DEBUG] ✓ Formato: 'web' (OAuth2 Web)")
+        elif 'type' in creds_json and creds_json['type'] == 'service_account':
+            logger.error("[DEBUG] ✗ ERROR: Este es un archivo de SERVICE ACCOUNT, no OAuth2!")
+        else:
+            logger.warning(f"[DEBUG] ⚠ Formato desconocido. Claves: {list(creds_json.keys())}")
+    except Exception as e:
+        logger.error(f"[DEBUG] Error leyendo JSON de credenciales: {e}")
+    
+    # Intentar cargar token existente
+    if token_path.exists():
+        try:
+            creds = Credentials.from_authorized_user_file(str(token_path), SCOPES)
+            logger.debug("Token cargado desde archivo")
+        except Exception as e:
+            logger.warning(f"Error cargando token: {e}")
+            creds = None
+    
+    # Si no hay credenciales válidas, obtener nuevas
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            try:
+                logger.info("Renovando token expirado...")
+                creds.refresh(Request())
+                logger.info("Token renovado exitosamente")
+            except Exception as e:
+                logger.warning(f"Error renovando token: {e}")
+                creds = None
+        
+        if not creds:
+            # Iniciar flujo de autorización
+            logger.info("Iniciando flujo de autorización OAuth2...")
+            logger.info("Se abrirá una ventana del navegador para autorizar la aplicación")
+            
+            flow = InstalledAppFlow.from_client_secrets_file(
+                str(credentials_path), 
+                SCOPES
+            )
+            creds = flow.run_local_server(port=0)  # Puerto automático
+            logger.info("Autorización completada")
+        
+        # Guardar token para futuras ejecuciones
+        token_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(token_path, "w") as token_file:
+            token_file.write(creds.to_json())
+        logger.info(f"Token guardado en {token_path}")
+    
+    # Construir servicio
+    try:
+        service = build("drive", "v3", credentials=creds)
         return service
     except Exception as e:
-        logger.error(f"Error inicializando servicio de Drive: {e}")
-        raise ValueError(f"Error de autenticación con Google Drive: {str(e)}")
+        logger.error(f"Error construyendo servicio de Drive: {e}")
+        raise ValueError(f"Error inicializando Google Drive: {str(e)}")
 
 
 def _generate_file_name(original_name: str, ai_data: dict) -> str:
@@ -98,7 +186,7 @@ async def upload_to_drive(
     folder_id: Optional[str] = None
 ) -> dict:
     """
-    Sube un archivo a Google Drive.
+    Sube un archivo a Google Drive usando OAuth2.
     
     Args:
         file_path: Ruta completa al archivo a subir
@@ -112,14 +200,6 @@ async def upload_to_drive(
             - drive_url: URL pública del archivo
             - drive_file_id: ID del archivo en Drive
             - error: mensaje de error (si hay)
-    
-    Example:
-        >>> result = await upload_to_drive(
-        ...     "/tmp/factura.pdf",
-        ...     "factura.pdf",
-        ...     {"fecha": "15/01/2024", "proveedor": "Empresa S.L."}
-        ... )
-        >>> print(result["drive_url"])
     """
     # Validar archivo
     path = Path(file_path)
@@ -185,7 +265,6 @@ async def upload_to_drive(
         logger.info(f"Archivo subido exitosamente: {file_id}")
         
         # Hacer el archivo accesible con enlace (opcional)
-        # Esto permite que cualquiera con el enlace pueda ver el archivo
         try:
             service.permissions().create(
                 fileId=file_id,
@@ -259,4 +338,3 @@ async def delete_from_drive(file_id: str) -> bool:
     except Exception as e:
         logger.exception(f"Error inesperado eliminando de Drive: {e}")
         return False
-
