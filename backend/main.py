@@ -6,7 +6,6 @@ load_dotenv()
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from auth import router as auth_router
-from n8n import router as n8n_router
 from facturas_api import router as facturas_router
 from ventas_api import router as ventas_router
 from dashboard_api import router as dashboard_router
@@ -14,6 +13,7 @@ from modelos_api import router as modelos_router
 from upload_api import router as upload_router
 from upload_historico_api import router as upload_historico_router
 from generate_invoice_api import router as generate_invoice_router
+from processing_api import router as processing_router
 from contextlib import asynccontextmanager
 
 
@@ -85,7 +85,6 @@ app.add_middleware(
 )
 
 app.include_router(auth_router)
-app.include_router(n8n_router)
 app.include_router(facturas_router)
 app.include_router(ventas_router)
 app.include_router(dashboard_router)
@@ -93,6 +92,7 @@ app.include_router(modelos_router)
 app.include_router(upload_router)
 app.include_router(upload_historico_router)
 app.include_router(generate_invoice_router)
+app.include_router(processing_router)
 
 logger.info("Routers montados y aplicación FastAPI iniciada")
 

@@ -10,8 +10,14 @@ type DocType = "factura" | "venta";
 type UploadStatus =
   | "UPLOADED"
   | "PROCESSING"
+  | "PROCESSING_AI"
+  | "AI_COMPLETED"
+  | "UPLOADING_DRIVE"
   | "PROCESSED"
+  | "COMPLETED"
   | "FAILED"
+  | "FAILED_AI"
+  | "FAILED_DRIVE"
   | "DUPLICATED";
 
 type Operacion = {
@@ -23,6 +29,33 @@ type Operacion = {
   tam_bytes?: number | null;
   storage_path?: string | null;
   status?: UploadStatus | null;
+};
+
+/** Estados del flujo de procesamiento paso a paso */
+type ProcessingStep = 
+  | "idle" 
+  | "confirm_ai" 
+  | "processing_ai" 
+  | "confirm_drive" 
+  | "uploading_drive" 
+  | "completed" 
+  | "error";
+
+/** Datos extraídos por la IA */
+type AIData = {
+  id_factura?: string;
+  fecha?: string;
+  proveedor?: string;
+  proveedor_vat?: string;
+  importe_sin_iva?: number;
+  iva_porcentaje?: number;
+  importe_total?: number;
+  moneda?: string;
+  tipo_cambio?: number;
+  pais_origen?: string;
+  categoria?: string;
+  descripcion?: string;
+  [key: string]: any;
 };
 
 const ALLOWED_TYPES = [
@@ -150,6 +183,16 @@ export default function UploadPage({ token, onLogout }: Props) {
   const [manualFile, setManualFile] = useState<File | null>(null);
   const manualFileInputRef = useRef<HTMLInputElement>(null);
 
+  // ====== FLUJO PASO A PASO ======
+  const [processingStep, setProcessingStep] = useState<ProcessingStep>("idle");
+  const [currentUploadId, setCurrentUploadId] = useState<string | null>(null);
+  const [currentFileName, setCurrentFileName] = useState<string | null>(null);
+  const [aiResult, setAiResult] = useState<AIData | null>(null);
+  const [driveUrl, setDriveUrl] = useState<string | null>(null);
+  const [processingError, setProcessingError] = useState<string | null>(null);
+  const [pendingFiles, setPendingFiles] = useState<Array<{file: File, uploadId: string}>>([]);
+  const [currentFileIndex, setCurrentFileIndex] = useState(0);
+
   console.log("⏱️ Delay entre subidas configurado:", UPLOAD_DELAY_MS, "ms");
 
   // ====== HISTÓRICO (uploads) ======
@@ -232,8 +275,12 @@ export default function UploadPage({ token, onLogout }: Props) {
     if (!token || !docType || files.length === 0) return;
     setUploading(true);
     setUploadingIndex(0);
+    
+    // Para facturas, recopilamos los upload_ids para el flujo paso a paso
+    const uploadedFiles: Array<{file: File, uploadId: string}> = [];
+    
     try {
-      // Secuencial
+      // Secuencial: subir todos los archivos primero
       for (let i = 0; i < files.length; i++) {
         setUploadingIndex(i);
         const fd = new FormData();
@@ -251,11 +298,34 @@ export default function UploadPage({ token, onLogout }: Props) {
           alert(`Fallo subiendo ${files[i].name}: ${t}`);
           continue;
         }
+        
+        const result = await res.json();
+        
+        // Para facturas, guardar el upload_id para el procesamiento paso a paso
+        if (docType === "factura" && result.upload_id) {
+          uploadedFiles.push({ file: files[i], uploadId: result.upload_id });
+        }
+        
         loadHistorico();
         if (UPLOAD_DELAY_MS > 0) {
           await sleep(UPLOAD_DELAY_MS);
         }
       }
+      
+      // Para facturas: iniciar el flujo paso a paso
+      if (docType === "factura" && uploadedFiles.length > 0) {
+        setPendingFiles(uploadedFiles);
+        setCurrentFileIndex(0);
+        setCurrentUploadId(uploadedFiles[0].uploadId);
+        setCurrentFileName(uploadedFiles[0].file.name);
+        setProcessingStep("confirm_ai");
+        setShowConfirm(false);
+        setUploading(false);
+        setUploadingIndex(null);
+        return; // No cerrar el modal, el flujo paso a paso continuará
+      }
+      
+      // Para ventas: comportamiento original
       setShowConfirm(false);
       clearFiles();
       setShowSuccess(true);
@@ -309,6 +379,139 @@ export default function UploadPage({ token, onLogout }: Props) {
 
   const disabled = !docType;
 
+  // ====== FUNCIONES DEL FLUJO PASO A PASO ======
+  
+  /** Inicia el procesamiento con IA para un upload */
+  const startAIProcessing = async (uploadId: string) => {
+    if (!token) return;
+    setProcessingStep("processing_ai");
+    setProcessingError(null);
+    
+    try {
+      const response = await fetchWithAuth(`/api/processing/${uploadId}/start-ai`, {
+        method: "POST",
+        token: token || undefined,
+        onLogout,
+      });
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        setAiResult(data.ai_data);
+        setProcessingStep("confirm_drive");
+        loadHistorico();
+      } else {
+        setProcessingError(data.error || "Error en el procesamiento con IA");
+        setProcessingStep("error");
+        loadHistorico();
+      }
+    } catch (err: any) {
+      console.error("Error en startAIProcessing:", err);
+      setProcessingError(err?.message || "Error desconocido");
+      setProcessingStep("error");
+    }
+  };
+  
+  /** Inicia la subida a Google Drive */
+  const startDriveUpload = async (uploadId: string) => {
+    if (!token) return;
+    setProcessingStep("uploading_drive");
+    setProcessingError(null);
+    
+    try {
+      const response = await fetchWithAuth(`/api/processing/${uploadId}/start-drive`, {
+        method: "POST",
+        token: token || undefined,
+        onLogout,
+      });
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        setDriveUrl(data.drive_url);
+        setProcessingStep("completed");
+        loadHistorico();
+      } else {
+        setProcessingError(data.error || "Error subiendo a Drive");
+        setProcessingStep("error");
+        loadHistorico();
+      }
+    } catch (err: any) {
+      console.error("Error en startDriveUpload:", err);
+      setProcessingError(err?.message || "Error desconocido");
+      setProcessingStep("error");
+    }
+  };
+  
+  /** Reintentar el paso fallido */
+  const retryProcessing = async () => {
+    if (!currentUploadId || !token) return;
+    
+    try {
+      const response = await fetchWithAuth(`/api/processing/${currentUploadId}/retry`, {
+        method: "POST",
+        token: token || undefined,
+        onLogout,
+      });
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        if (data.status === "AI_COMPLETED") {
+          setAiResult(data.ai_data);
+          setProcessingStep("confirm_drive");
+        } else if (data.status === "COMPLETED") {
+          setDriveUrl(data.drive_url);
+          setProcessingStep("completed");
+        }
+        loadHistorico();
+      } else {
+        setProcessingError(data.error || "Error en el reintento");
+        setProcessingStep("error");
+      }
+    } catch (err: any) {
+      console.error("Error en retryProcessing:", err);
+      setProcessingError(err?.message || "Error desconocido");
+    }
+  };
+  
+  /** Pasar a la siguiente factura o finalizar */
+  const processNextFile = () => {
+    const nextIndex = currentFileIndex + 1;
+    if (nextIndex < pendingFiles.length) {
+      setCurrentFileIndex(nextIndex);
+      setCurrentUploadId(pendingFiles[nextIndex].uploadId);
+      setCurrentFileName(pendingFiles[nextIndex].file.name);
+      setAiResult(null);
+      setDriveUrl(null);
+      setProcessingError(null);
+      setProcessingStep("confirm_ai");
+    } else {
+      // Finalizar
+      resetProcessingState();
+      clearFiles();
+      setShowSuccess(true);
+    }
+  };
+  
+  /** Resetear el estado del flujo */
+  const resetProcessingState = () => {
+    setProcessingStep("idle");
+    setCurrentUploadId(null);
+    setCurrentFileName(null);
+    setAiResult(null);
+    setDriveUrl(null);
+    setProcessingError(null);
+    setPendingFiles([]);
+    setCurrentFileIndex(0);
+  };
+  
+  /** Cancelar el procesamiento */
+  const cancelProcessing = () => {
+    resetProcessingState();
+    setShowConfirm(false);
+  };
+
   // helpers formulario manual
   const setManualField = <K extends keyof ManualForm>(
     field: K,
@@ -354,11 +557,15 @@ export default function UploadPage({ token, onLogout }: Props) {
           setFacturaId(null);
           setFacturaError(null);
         }
+        // Cerrar modal del flujo paso a paso (solo si no está procesando)
+        if (processingStep !== "idle" && processingStep !== "processing_ai" && processingStep !== "uploading_drive") {
+          cancelProcessing();
+        }
       }
     };
     window.addEventListener("keydown", handleEsc);
     return () => window.removeEventListener("keydown", handleEsc);
-  }, [showManualModal, showTypeSelectionModal, showDetailsModal]);
+  }, [showManualModal, showTypeSelectionModal, showDetailsModal, processingStep]);
 
   // Abrir modal de detalles
   const handleRowClick = async (op: Operacion) => {
@@ -910,7 +1117,7 @@ export default function UploadPage({ token, onLogout }: Props) {
               {files.length > 1 ? "s" : ""} correctamente
             </h2>
             <p className="text-gray-700 text-sm mb-6">
-              Tus archivos se han guardado y serán procesados en breve.
+              Tus archivos se han guardado y procesado correctamente.
             </p>
             <button
               onClick={() => setShowSuccess(false)}
@@ -918,6 +1125,282 @@ export default function UploadPage({ token, onLogout }: Props) {
             >
               Cerrar
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* ========= MODAL FLUJO PASO A PASO ========= */}
+      {processingStep !== "idle" && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col"
+            style={{ boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)" }}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between p-6 border-b border-gray-200">
+              <div>
+                <h2 
+                  className="text-xl font-bold"
+                  style={{
+                    background: "linear-gradient(135deg, #3631a3 0%, #092342 100%)",
+                    WebkitBackgroundClip: "text",
+                    WebkitTextFillColor: "transparent",
+                    backgroundClip: "text",
+                  }}
+                >
+                  Procesamiento de Factura
+                </h2>
+                {pendingFiles.length > 1 && (
+                  <p className="text-sm text-gray-500 mt-1">
+                    Factura {currentFileIndex + 1} de {pendingFiles.length}
+                  </p>
+                )}
+              </div>
+              <button
+                onClick={cancelProcessing}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+                style={{ fontSize: "24px", lineHeight: "1", padding: "4px", cursor: "pointer" }}
+                aria-label="Cerrar"
+              >
+                ×
+              </button>
+            </div>
+
+            {/* Contenido */}
+            <div className="overflow-y-auto p-6" style={{ maxHeight: "calc(90vh - 200px)" }}>
+              {/* Nombre del archivo */}
+              {currentFileName && (
+                <div className="mb-4 p-3 bg-gray-50 rounded-lg">
+                  <p className="text-sm text-gray-600">
+                    <span className="font-semibold">Archivo:</span> {currentFileName}
+                  </p>
+                </div>
+              )}
+
+              {/* PASO 1: Confirmar procesamiento con IA */}
+              {processingStep === "confirm_ai" && (
+                <div className="text-center py-6">
+                  <div className="mb-6">
+                    <div className="w-16 h-16 mx-auto mb-4 bg-blue-100 rounded-full flex items-center justify-center">
+                      <span className="text-3xl">🤖</span>
+                    </div>
+                    <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                      ¿Procesar con Inteligencia Artificial?
+                    </h3>
+                    <p className="text-gray-600 text-sm">
+                      La IA extraerá automáticamente los datos de la factura: fecha, proveedor, importes, etc.
+                    </p>
+                  </div>
+                  <div className="flex justify-center gap-4">
+                    <button
+                      onClick={cancelProcessing}
+                      className="px-5 py-2 rounded-lg border border-gray-300 bg-white hover:bg-gray-50 transition-colors font-medium"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      onClick={() => currentUploadId && startAIProcessing(currentUploadId)}
+                      className="px-5 py-2 rounded-lg bg-[#0875bb] text-white hover:bg-[#065a8f] transition-colors font-medium"
+                    >
+                      Sí, procesar con IA
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* PASO 2: Procesando con IA */}
+              {processingStep === "processing_ai" && (
+                <div className="text-center py-8">
+                  <div className="mb-6">
+                    <div 
+                      className="w-16 h-16 mx-auto mb-4 border-4 border-blue-500 border-t-transparent rounded-full"
+                      style={{ animation: "spin 1s linear infinite" }}
+                    />
+                    <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                      Procesando con IA...
+                    </h3>
+                    <p className="text-gray-600 text-sm">
+                      Extrayendo información de la factura. Esto puede tardar unos segundos.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* PASO 3: Confirmar subida a Drive */}
+              {processingStep === "confirm_drive" && (
+                <div className="py-4">
+                  <div className="mb-6 text-center">
+                    <div className="w-16 h-16 mx-auto mb-4 bg-green-100 rounded-full flex items-center justify-center">
+                      <span className="text-3xl">✅</span>
+                    </div>
+                    <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                      Datos extraídos correctamente
+                    </h3>
+                  </div>
+                  
+                  {/* Mostrar datos extraídos */}
+                  {aiResult && (
+                    <div className="mb-6 p-4 bg-gray-50 rounded-lg">
+                      <h4 className="text-sm font-semibold text-gray-700 mb-3">Información extraída:</h4>
+                      <div className="grid grid-cols-2 gap-3 text-sm">
+                        {aiResult.fecha && (
+                          <div>
+                            <span className="text-gray-500">Fecha:</span>
+                            <span className="ml-2 text-gray-900">{aiResult.fecha}</span>
+                          </div>
+                        )}
+                        {aiResult.proveedor && (
+                          <div>
+                            <span className="text-gray-500">Proveedor:</span>
+                            <span className="ml-2 text-gray-900">{aiResult.proveedor}</span>
+                          </div>
+                        )}
+                        {aiResult.importe_sin_iva != null && (
+                          <div>
+                            <span className="text-gray-500">Importe sin IVA:</span>
+                            <span className="ml-2 text-gray-900">{aiResult.importe_sin_iva} {aiResult.moneda || "EUR"}</span>
+                          </div>
+                        )}
+                        {aiResult.iva_porcentaje != null && (
+                          <div>
+                            <span className="text-gray-500">IVA:</span>
+                            <span className="ml-2 text-gray-900">{aiResult.iva_porcentaje}%</span>
+                          </div>
+                        )}
+                        {aiResult.importe_total != null && (
+                          <div>
+                            <span className="text-gray-500">Total:</span>
+                            <span className="ml-2 text-gray-900 font-semibold">{aiResult.importe_total} {aiResult.moneda || "EUR"}</span>
+                          </div>
+                        )}
+                        {aiResult.pais_origen && (
+                          <div>
+                            <span className="text-gray-500">País:</span>
+                            <span className="ml-2 text-gray-900">{aiResult.pais_origen}</span>
+                          </div>
+                        )}
+                        {aiResult.categoria && (
+                          <div className="col-span-2">
+                            <span className="text-gray-500">Categoría:</span>
+                            <span className="ml-2 text-gray-900">{aiResult.categoria}</span>
+                          </div>
+                        )}
+                        {aiResult.descripcion && (
+                          <div className="col-span-2">
+                            <span className="text-gray-500">Descripción:</span>
+                            <span className="ml-2 text-gray-900">{aiResult.descripcion}</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  
+                  <div className="text-center">
+                    <p className="text-gray-600 text-sm mb-4">
+                      ¿Deseas subir el archivo a Google Drive?
+                    </p>
+                    <div className="flex justify-center gap-4">
+                      <button
+                        onClick={processNextFile}
+                        className="px-5 py-2 rounded-lg border border-gray-300 bg-white hover:bg-gray-50 transition-colors font-medium"
+                      >
+                        Omitir Drive
+                      </button>
+                      <button
+                        onClick={() => currentUploadId && startDriveUpload(currentUploadId)}
+                        className="px-5 py-2 rounded-lg bg-[#0875bb] text-white hover:bg-[#065a8f] transition-colors font-medium inline-flex items-center gap-2"
+                      >
+                        <span>📁</span>
+                        <span>Subir a Drive</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* PASO 4: Subiendo a Drive */}
+              {processingStep === "uploading_drive" && (
+                <div className="text-center py-8">
+                  <div className="mb-6">
+                    <div 
+                      className="w-16 h-16 mx-auto mb-4 border-4 border-green-500 border-t-transparent rounded-full"
+                      style={{ animation: "spin 1s linear infinite" }}
+                    />
+                    <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                      Subiendo a Google Drive...
+                    </h3>
+                    <p className="text-gray-600 text-sm">
+                      Guardando el archivo en tu Google Drive.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* PASO 5: Completado */}
+              {processingStep === "completed" && (
+                <div className="text-center py-6">
+                  <div className="mb-6">
+                    <div className="w-16 h-16 mx-auto mb-4 bg-green-100 rounded-full flex items-center justify-center">
+                      <span className="text-3xl">🎉</span>
+                    </div>
+                    <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                      ¡Factura procesada correctamente!
+                    </h3>
+                    {driveUrl && (
+                      <div className="mb-4">
+                        <button
+                          onClick={() => driveUrl && window.open(driveUrl, "_blank", "noopener,noreferrer")}
+                          className="text-blue-600 hover:text-blue-800 text-sm underline"
+                        >
+                          Ver en Google Drive
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex justify-center">
+                    <button
+                      onClick={processNextFile}
+                      className="px-6 py-2 rounded-lg bg-[#0875bb] text-white hover:bg-[#065a8f] transition-colors font-medium"
+                    >
+                      {currentFileIndex + 1 < pendingFiles.length ? "Siguiente factura" : "Finalizar"}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* ERROR */}
+              {processingStep === "error" && (
+                <div className="text-center py-6">
+                  <div className="mb-6">
+                    <div className="w-16 h-16 mx-auto mb-4 bg-red-100 rounded-full flex items-center justify-center">
+                      <span className="text-3xl">❌</span>
+                    </div>
+                    <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                      Error en el procesamiento
+                    </h3>
+                    {processingError && (
+                      <p className="text-red-600 text-sm mb-4 p-3 bg-red-50 rounded-lg">
+                        {processingError}
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex justify-center gap-4">
+                    <button
+                      onClick={processNextFile}
+                      className="px-5 py-2 rounded-lg border border-gray-300 bg-white hover:bg-gray-50 transition-colors font-medium"
+                    >
+                      Omitir esta factura
+                    </button>
+                    <button
+                      onClick={retryProcessing}
+                      className="px-5 py-2 rounded-lg bg-[#0875bb] text-white hover:bg-[#065a8f] transition-colors font-medium"
+                    >
+                      Reintentar
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}

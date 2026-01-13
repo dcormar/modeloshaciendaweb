@@ -1,6 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 
+# Ir al directorio del script (backend/)
+cd "$(dirname "$0")"
+
 # Cargar .env de forma segura
 if [ -f ".env" ]; then
   set -a
@@ -9,5 +12,5 @@ if [ -f ".env" ]; then
   set +a
 fi
 
-# Arrancar uvicorn (ajusta ruta del venv si cambia)
-"/Users/davidcortijomartin/Documents/llm/modeloshaciendaweb/.venv/bin/uvicorn" main:app --reload --port 8000
+# Arrancar uvicorn con el venv local
+.venv/bin/uvicorn main:app --reload --port 8000

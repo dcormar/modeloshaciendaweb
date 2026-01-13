@@ -226,6 +226,8 @@ async def upload_file(
                     json=payload
                 )
             else:
+                # Para facturas: solo guardar con status UPLOADED
+                # El procesamiento con IA y subida a Drive se hace paso a paso desde el frontend
                 payload = {
                     "tipo": "FACTURA",
                     "status": "UPLOADED",
@@ -235,7 +237,7 @@ async def upload_file(
                     "file_size_bytes": size_bytes,
                     "sha256": sha256,
                     "source": "manual",
-                    "manual":  not iaprocess,
+                    "manual": iaprocess.lower() != "true",
                 }
                 resp = await client.post(
                     f"{SUPABASE_URL}/rest/v1/uploads",
@@ -253,58 +255,42 @@ async def upload_file(
         logger.exception("Error de red con Supabase")
         raise HTTPException(status_code=502, detail=f"Error de red con Supabase: {e}") from e
 
-
-    
-    # Insertar registro en automations antes de llamar a n8n
-    await insert_automation_record(tipo)
-    
-    # Llamada a n8n (sin verificar TLS y con logs)
-    # iaprocess puede ser "true" o "false" como string
-    iaprocess_bool = iaprocess.lower() == "true"
-    n8n_payload = {
-        "tipo": tipo,            # "factura" | "venta"
-        "storage": "local",
-        "user": current_user.username,
-        "filename": safe_name,
-        "upload_id": upload_id,
-        "iaprocess": iaprocess_bool,  # Añadido parámetro iaprocess
-    }
-    try:
-        status, text = await post_to_n8n(n8n_payload)
-        if status >= 300:
-            logger.error("Webhook n8n devolvió %s: %s", status, text)
-            # Marca FAILED para que el front enseñe botón de "Reintentar"
-            async with httpx.AsyncClient(timeout=10, verify=certifi.where()) as client:
-                if tipo == "venta":
+    # Para VENTAS: mantener el flujo antiguo con n8n automático
+    if tipo == "venta":
+        await insert_automation_record(tipo)
+        n8n_payload = {
+            "tipo": tipo,
+            "storage": "local",
+            "user": current_user.username,
+            "filename": safe_name,
+            "upload_id": upload_id,
+            "iaprocess": True,
+        }
+        try:
+            status, text = await post_to_n8n(n8n_payload)
+            if status >= 300:
+                logger.error("Webhook n8n devolvió %s: %s", status, text)
+                async with httpx.AsyncClient(timeout=10, verify=certifi.where()) as client:
                     await client.patch(
                         f"{SUPABASE_URL}/rest/v1/ventas_uploads?id=eq.{upload_id}",
                         headers=supabase_headers(),
-                        json={"status": "FAILED", "notes": f"n8n {status}: {text[:200]}",}
+                        json={"status": "FAILED", "notes": f"n8n {status}: {text[:200]}"}
                     )
-                else:
-                    await client.patch(
-                        f"{SUPABASE_URL}/rest/v1/uploads?id=eq.{upload_id}",
-                        headers=supabase_headers(),
-                        json={"status": "FAILED", "meta": {"n8n_error": text[:200]}}
-                    )
-        else:
-            logger.info("Webhook n8n OK (%s): %s", status, n8n_payload)
-    except Exception as e:
-        logger.exception("Error llamando al webhook n8n: %s", e)
-        # Marca FAILED
-        async with httpx.AsyncClient(timeout=10, verify=certifi.where()) as client:
-            if tipo == "venta":
+            else:
+                logger.info("Webhook n8n OK (%s): %s", status, n8n_payload)
+        except Exception as e:
+            logger.exception("Error llamando al webhook n8n: %s", e)
+            async with httpx.AsyncClient(timeout=10, verify=certifi.where()) as client:
                 await client.patch(
                     f"{SUPABASE_URL}/rest/v1/ventas_uploads?id=eq.{upload_id}",
                     headers=supabase_headers(),
-                    json={"status": "FAILED", "notes": f"ex:{str(e)[:200]}",}
+                    json={"status": "FAILED", "notes": f"ex:{str(e)[:200]}"}
                 )
-            else:
-                await client.patch(
-                    f"{SUPABASE_URL}/rest/v1/uploads?id=eq.{upload_id}",
-                    headers=supabase_headers(),
-                    json={"status": "FAILED", "meta": {"ex": str(e)[:200]}}
-                )
+
+    # Para FACTURAS: NO llamar a n8n automáticamente
+    # El frontend se encargará de llamar a /api/processing/{upload_id}/start-ai
+    # y luego /api/processing/{upload_id}/start-drive paso a paso
+    logger.info("Archivo %s subido correctamente (tipo=%s, upload_id=%s)", safe_name, tipo, upload_id)
 
     return {
         "ok": True,
@@ -313,6 +299,7 @@ async def upload_file(
         "tipo": tipo,
         "usuario": current_user.username,
         "db_row": db_row,
+        "upload_id": upload_id,
     }
 
 # =========================
