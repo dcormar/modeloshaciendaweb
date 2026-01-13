@@ -31,3 +31,6 @@ dist-ssr
 # Credenciales (Google Drive, etc.)
 credentials/
 *.json.credentials
+
+# Cursor IDE (contiene tokens MCP)
+.cursor/
