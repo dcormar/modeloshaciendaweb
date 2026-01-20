@@ -1,18 +1,26 @@
 # invoice_analyzer_service.py
-# Servicio para extraer datos de facturas usando Google Gemini directamente
+# Servicio para extraer datos de facturas usando Google Gemini con fallback a OpenAI
 
 import os
 import logging
+import base64
 from datetime import datetime
 from typing import Optional
 from pathlib import Path
 
 import google.generativeai as genai
+from google.api_core import exceptions as google_exceptions
+import openai
+
+# Reducir el logging de OpenAI
+logging.getLogger("openai").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 
 # Configuración
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "").strip()
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 
 # Configurar la API de Gemini
 if GOOGLE_API_KEY:
@@ -61,7 +69,7 @@ IMPORTANTE:
 
 
 def _parse_json_response(text: str) -> dict:
-    """Parsea la respuesta JSON de Gemini, limpiando posibles artefactos"""
+    """Parsea la respuesta JSON de la IA, limpiando posibles artefactos"""
     import json
     
     # Limpiar posibles markdown code blocks
@@ -77,13 +85,168 @@ def _parse_json_response(text: str) -> dict:
     try:
         return json.loads(text)
     except json.JSONDecodeError as e:
-        logger.error(f"Error parseando JSON de Gemini: {e}\nTexto: {text[:500]}")
-        raise ValueError(f"Respuesta de Gemini no es JSON válido: {str(e)}")
+        logger.error(f"Error parseando JSON: {e}\nTexto: {text[:500]}")
+        raise ValueError(f"Respuesta de IA no es JSON válido: {str(e)}")
+
+
+def _is_rate_limit_error(error: Exception) -> bool:
+    """Detecta si el error es un rate limit (429)"""
+    error_str = str(error).lower()
+    
+    # Detectar errores de rate limit de diferentes formas
+    if "429" in error_str:
+        return True
+    if "resource exhausted" in error_str:
+        return True
+    if "quota" in error_str:
+        return True
+    if "rate limit" in error_str:
+        return True
+    if isinstance(error, google_exceptions.ResourceExhausted):
+        return True
+    
+    return False
+
+
+async def _extract_with_gemini(file_path: Path) -> str:
+    """
+    Extrae datos usando Gemini.
+    Retorna el texto de respuesta o lanza excepción.
+    """
+    # Subir el archivo a Gemini
+    logger.info(f"[Gemini] Subiendo archivo: {file_path.name}")
+    uploaded_file = genai.upload_file(file_path)
+    logger.info(f"[Gemini] Archivo subido correctamente")
+    
+    try:
+        # Crear el modelo y generar contenido
+        model = genai.GenerativeModel("gemini-2.0-flash-lite")
+        response = model.generate_content([uploaded_file, EXTRACTION_PROMPT])
+        return response.text
+    finally:
+        # Limpiar el archivo subido
+        try:
+            genai.delete_file(uploaded_file.name)
+            logger.debug(f"[Gemini] Archivo temporal eliminado")
+        except Exception as e:
+            logger.warning(f"[Gemini] No se pudo eliminar archivo temporal: {e}")
+
+
+async def _extract_with_openai(file_path: Path) -> str:
+    """
+    Extrae datos usando OpenAI GPT-4o-mini como fallback.
+    Usa la Files API para subir el PDF y luego lo referencia en el chat.
+    Retorna el texto de respuesta o lanza excepción.
+    """
+    if not OPENAI_API_KEY:
+        raise ValueError("OPENAI_API_KEY no está configurada para fallback")
+    
+    logger.info(f"[OpenAI] Subiendo archivo: {file_path.name}")
+    
+    # Crear el cliente de OpenAI
+    client = openai.OpenAI(api_key=OPENAI_API_KEY)
+    
+    uploaded_file = None
+    try:
+        # Subir el archivo a OpenAI Files API
+        with open(file_path, "rb") as f:
+            uploaded_file = client.files.create(
+                file=f,
+                purpose="assistants"  # Para usar en chat/completions con vision
+            )
+        
+        logger.info(f"[OpenAI] Archivo subido correctamente")
+        
+        # Llamar a GPT-4o-mini con el archivo usando el formato correcto
+        # Para PDFs, usamos el enfoque de file_id con la Responses API
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "file",
+                            "file": {
+                                "file_id": uploaded_file.id,
+                            },
+                        },
+                        {
+                            "type": "text",
+                            "text": EXTRACTION_PROMPT,
+                        },
+                    ],
+                }
+            ],
+            max_tokens=2000,
+        )
+        
+        logger.info(f"[OpenAI] Extracción completada")
+        return response.choices[0].message.content
+        
+    except openai.RateLimitError as e:
+        logger.error(f"[OpenAI] Rate limit error: {e}")
+        raise ValueError(f"OpenAI también tiene rate limit: {str(e)}")
+    except openai.BadRequestError as e:
+        # Si el formato file no funciona, intentar con base64 para imágenes
+        logger.warning(f"[OpenAI] Error con formato file, probando base64: {e}")
+        
+        # Leer el archivo y convertir a base64
+        with open(file_path, "rb") as f:
+            file_content = f.read()
+        file_base64 = base64.standard_b64encode(file_content).decode("utf-8")
+        
+        # Determinar el tipo MIME
+        suffix = file_path.suffix.lower()
+        if suffix == ".pdf":
+            mime_type = "application/pdf"
+        elif suffix in [".png", ".jpg", ".jpeg"]:
+            mime_type = f"image/{suffix[1:]}"
+        else:
+            mime_type = "application/octet-stream"
+        
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:{mime_type};base64,{file_base64}",
+                            },
+                        },
+                        {
+                            "type": "text",
+                            "text": EXTRACTION_PROMPT,
+                        },
+                    ],
+                }
+            ],
+            max_tokens=2000,
+        )
+        
+        logger.info(f"[OpenAI] Extracción completada (base64)")
+        return response.choices[0].message.content
+        
+    except Exception as e:
+        logger.error(f"[OpenAI] Error: {e}")
+        raise ValueError(f"Error en procesamiento con OpenAI: {str(e)}")
+    finally:
+        # Limpiar el archivo subido si existe
+        if uploaded_file:
+            try:
+                client.files.delete(uploaded_file.id)
+                logger.debug(f"[OpenAI] Archivo temporal eliminado")
+            except Exception as e:
+                logger.warning(f"[OpenAI] No se pudo eliminar archivo temporal: {e}")
 
 
 async def extract_invoice_data(file_path: str) -> dict:
     """
     Extrae datos estructurados de una factura usando Gemini.
+    Si Gemini devuelve error 429 (rate limit), hace fallback a OpenAI GPT-4o-mini.
     
     Args:
         file_path: Ruta completa al archivo PDF de la factura
@@ -98,58 +261,59 @@ async def extract_invoice_data(file_path: str) -> dict:
     if not GOOGLE_API_KEY:
         raise ValueError("GOOGLE_API_KEY no está configurada")
     
-    logger.info(f"Extrayendo datos de factura: {file_path}")
+    logger.info(f"Extrayendo datos de factura: {Path(file_path).name}")
     
     # 1. Verificar que el archivo existe
     path = Path(file_path)
     if not path.exists():
         raise FileNotFoundError(f"Archivo no encontrado: {file_path}")
     
-    # 2. Subir el archivo a Gemini
-    try:
-        logger.info(f"Subiendo archivo a Gemini: {path.name}")
-        uploaded_file = genai.upload_file(path)
-        logger.info(f"Archivo subido: {uploaded_file.name}")
-    except Exception as e:
-        logger.error(f"Error subiendo archivo a Gemini: {e}")
-        raise ValueError(f"Error subiendo archivo: {str(e)}")
+    response_text = None
+    used_provider = "gemini"
     
-    # 3. Crear el modelo
+    # 2. Intentar con Gemini primero
     try:
-        model = genai.GenerativeModel("gemini-2.0-flash-lite")
+        response_text = await _extract_with_gemini(path)
+        logger.info("[Gemini] Extracción completada exitosamente")
+        
     except Exception as e:
-        logger.error(f"Error inicializando Gemini: {e}")
-        raise ValueError(f"Error inicializando modelo de IA: {str(e)}")
+        if _is_rate_limit_error(e):
+            logger.warning(f"[Gemini] Rate limit (429) detectado, intentando con OpenAI...")
+            
+            # Verificar si OpenAI está configurado
+            if not OPENAI_API_KEY:
+                raise ValueError("Gemini tiene rate limit y OPENAI_API_KEY no está configurada como fallback")
+            
+            # Fallback a OpenAI
+            try:
+                response_text = await _extract_with_openai(path)
+                used_provider = "openai"
+                logger.info("[OpenAI] Extracción completada exitosamente (fallback)")
+                
+            except Exception as openai_error:
+                logger.error(f"[OpenAI] Error en fallback: {openai_error}")
+                raise ValueError(f"Error en procesamiento con IA (Gemini: 429, OpenAI: {str(openai_error)})")
+        else:
+            # Otro tipo de error de Gemini
+            logger.error(f"[Gemini] Error: {e}")
+            raise ValueError(f"Error en procesamiento con IA: {str(e)}")
     
-    # 4. Llamar a Gemini con el archivo
-    try:
-        response = model.generate_content([uploaded_file, EXTRACTION_PROMPT])
-        response_text = response.text
-        logger.debug(f"Respuesta de Gemini: {response_text[:500]}...")
-    except Exception as e:
-        logger.error(f"Error llamando a Gemini: {e}")
-        raise ValueError(f"Error en procesamiento con IA: {str(e)}")
-    finally:
-        # Limpiar el archivo subido
-        try:
-            genai.delete_file(uploaded_file.name)
-            logger.debug(f"Archivo temporal eliminado: {uploaded_file.name}")
-        except Exception as e:
-            logger.warning(f"No se pudo eliminar archivo temporal: {e}")
-    
-    # 5. Parsear la respuesta JSON
+    # 3. Parsear la respuesta JSON
     try:
         data = _parse_json_response(response_text)
     except ValueError:
         raise
     
-    # 6. Validar y normalizar datos
+    # 4. Añadir metadato del proveedor usado
+    data["_ai_provider"] = used_provider
+    
+    # 5. Validar y normalizar datos
     data = _normalize_invoice_data(data)
     
-    # 7. Si la moneda no es EUR y no hay tipo de cambio, obtenerlo de Frankfurter
+    # 6. Si la moneda no es EUR y no hay tipo de cambio, obtenerlo de Frankfurter
     data = await _enrich_with_exchange_rate(data)
     
-    logger.info(f"Datos extraídos exitosamente: {data.get('id_factura', 'sin ID')}")
+    logger.info(f"Datos extraídos exitosamente ({used_provider}): {data.get('id_factura', 'sin ID')}")
     return data
 
 

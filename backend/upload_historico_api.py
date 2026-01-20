@@ -20,50 +20,111 @@ class UploadItem(BaseModel):
 
 class UploadsResponse(BaseModel):
     items: List[UploadItem]
+    total: int
+    page: int
+    total_pages: int
 
 @router.get("/historico", response_model=UploadsResponse)
-async def uploads_historico(limit: int = 20, tz: str = "Europe/Madrid"):
+async def uploads_historico(
+    limit: int = 20,
+    offset: int = 0,
+    order_by: str = "fecha",
+    order_dir: str = "desc",
+    tz: str = "Europe/Madrid"
+):
     supabase_url = (os.getenv("SUPABASE_URL") or "").strip()
     supabase_key = (os.getenv("SUPABASE_SERVICE_ROLE_KEY") or "").strip()
     if not supabase_url or not supabase_key:
         raise HTTPException(status_code=500, detail="Config supabase incompleta")
 
-    rpc_url = f"{supabase_url}/rest/v1/rpc/uploads_historico"
     headers = {
         "apikey": supabase_key,
         "Authorization": f"Bearer {supabase_key}",
         "Content-Type": "application/json",
-        "Accept": "application/json",
-        "Prefer": "return=representation",
     }
-    payload = {"p_limit": limit, "p_tz": tz}
 
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.post(rpc_url, headers=headers, json=payload)
+    # Validar order_by y order_dir
+    valid_order_by = ["fecha", "tipo", "original_filename", "tam_bytes", "status"]
+    if order_by not in valid_order_by:
+        order_by = "fecha"
+    
+    order_dir = order_dir.lower()
+    if order_dir not in ["asc", "desc"]:
+        order_dir = "desc"
 
-    if resp.status_code != 200:
-        logger.error("📛 RPC uploads_historico falló %s: %s", resp.status_code, resp.text)
-        raise HTTPException(status_code=502, detail=resp.text)
+    async with httpx.AsyncClient(timeout=30, verify=certifi.where()) as client:
+        # Obtener total de registros
+        count_resp = await client.get(
+            f"{supabase_url}/rest/v1/uploads?select=id",
+            headers={**headers, "Prefer": "count=exact"}
+        )
+        total = int(count_resp.headers.get("content-range", "0").split("/")[-1]) if count_resp.status_code == 200 else 0
 
-    rows = resp.json() or []
-    logger.info("📦 RPC uploads_historico devolvió %d filas", len(rows))
-    if rows:
-        logger.debug("🔍 Primera fila: %s", rows[0])
-    return {
-        "items": [
-            {
-                "id": r["id"],
-                "fecha": r["fecha"],
-                "tipo": r["tipo"],
-                "descripcion": r["descripcion"] or "Pending Processing",
-                "tam_bytes": r.get("tam_bytes"),
-                "storage_path": r.get("storage_path"),
-                "status": r.get("status"),
-                "original_filename":r.get("original_filename"),
-            }
-            for r in rows
-        ]
-    }
+        # Mapear columnas de ordenamiento
+        column_mapping = {
+            "fecha": "created_at",
+            "tipo": "tipo",
+            "original_filename": "original_filename",
+            "tam_bytes": "file_size_bytes",
+            "status": "status"
+        }
+        order_column = column_mapping.get(order_by, "created_at")
+        
+        # Obtener uploads con factura_id para luego obtener descripciones
+        query_url = (
+            f"{supabase_url}/rest/v1/uploads"
+            f"?select=id,created_at,tipo,original_filename,file_size_bytes,storage_path,status,factura_id"
+            f"&order={order_column}.{order_dir}"
+            f"&limit={limit}"
+            f"&offset={offset}"
+        )
+        
+        resp = await client.get(query_url, headers=headers)
+
+        if resp.status_code != 200:
+            logger.error("📛 Query uploads falló %s: %s", resp.status_code, resp.text)
+            raise HTTPException(status_code=502, detail=resp.text)
+
+        rows = resp.json() or []
+        logger.info("📦 Query uploads devolvió %d filas (total: %d)", len(rows), total)
+        
+        # Obtener descripciones desde facturas si hay factura_id
+        factura_ids = [r.get("factura_id") for r in rows if r.get("factura_id")]
+        descripciones_map = {}
+        
+        if factura_ids:
+            # Obtener facturas en batch
+            factura_ids_str = ",".join(str(fid) for fid in factura_ids)
+            facturas_resp = await client.get(
+                f"{supabase_url}/rest/v1/facturas?id=in.({factura_ids_str})&select=id,descripcion",
+                headers=headers
+            )
+            if facturas_resp.status_code == 200:
+                facturas = facturas_resp.json() or []
+                descripciones_map = {f["id"]: f.get("descripcion") or "Pending Processing" for f in facturas}
+        
+        # Calcular página actual y total de páginas
+        page = (offset // limit) + 1 if limit > 0 else 1
+        total_pages = (total + limit - 1) // limit if limit > 0 else 1
+        
+        return {
+            "items": [
+                {
+                    "id": r["id"],
+                    "fecha": r.get("created_at", ""),
+                    "tipo": r.get("tipo", ""),
+                    "descripcion": descripciones_map.get(r.get("factura_id")) or "Pending Processing",
+                    "tam_bytes": r.get("file_size_bytes"),
+                    "storage_path": r.get("storage_path"),
+                    "status": r.get("status"),
+                    "original_filename": r.get("original_filename") or "",
+                }
+                for r in rows
+            ],
+            "total": total,
+            "page": page,
+            "total_pages": total_pages,
+        }
 
 @router.get("/{upload_id}/factura")
 async def get_factura_from_upload(

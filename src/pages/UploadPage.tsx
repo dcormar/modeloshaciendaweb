@@ -18,8 +18,23 @@ type UploadStatus =
   | "COMPLETED"
   | "FAILED"
   | "FAILED_AI"
-  | "FAILED_DRIVE"
-  | "DUPLICATED";
+  | "FAILED_DRIVE";
+
+/** Información del duplicado detectado */
+type DuplicateInfo = {
+  existing: {
+    id: string;
+    filename: string;
+    uploaded_at: string;
+    status: string;
+  };
+  factura: {
+    id_factura: string;
+    importe_total_euro: number | null;
+    fecha: string;
+  } | null;
+  temp_file: string;
+};
 
 type Operacion = {
   id: string;
@@ -165,7 +180,6 @@ export default function UploadPage({ token, onLogout }: Props) {
   const [uploading, setUploading] = useState(false);
   const [uploadingIndex, setUploadingIndex] = useState<number | null>(null);
 
-  const [retryingId, setRetryingId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const [showSuccess, setShowSuccess] = useState(false);
   
@@ -194,14 +208,33 @@ export default function UploadPage({ token, onLogout }: Props) {
   const [pendingFiles, setPendingFiles] = useState<Array<{file: File, uploadId: string}>>([]);
   const [currentFileIndex, setCurrentFileIndex] = useState(0);
 
+  // ====== DUPLICADO ======
+  const [showDuplicateModal, setShowDuplicateModal] = useState(false);
+  const [duplicateInfo, setDuplicateInfo] = useState<DuplicateInfo | null>(null);
+  const [pendingDuplicateFile, setPendingDuplicateFile] = useState<File | null>(null);
+  const [duplicateProcessing, setDuplicateProcessing] = useState(false);
+
+  // ====== MODAL SELECCIÓN DE TIPO ======
+  const [showTypeSelectModal, setShowTypeSelectModal] = useState(false);
+  const [pendingDropFiles, setPendingDropFiles] = useState<File[]>([]);
+
   console.log("⏱️ Delay entre subidas configurado:", UPLOAD_DELAY_MS, "ms");
 
   // ====== HISTÓRICO (uploads) ======
   const [ops, setOps] = useState<Operacion[]>([]);
   const [opsError, setOpsError] = useState<string | null>(null);
+  const [sortColumn, setSortColumn] = useState<string>("fecha");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [totalRecords, setTotalRecords] = useState<number>(0);
+  const [totalPages, setTotalPages] = useState<number>(1);
+  const pageSize = 20;
 
   const loadHistorico = () => {
-    fetchWithAuth("http://localhost:8000/api/uploads/historico?limit=20", {
+    const offset = (currentPage - 1) * pageSize;
+    const url = `http://localhost:8000/api/uploads/historico?limit=${pageSize}&offset=${offset}&order_by=${sortColumn}&order_dir=${sortDirection}`;
+    
+    fetchWithAuth(url, {
       token: token || undefined,
       onLogout,
     })
@@ -209,15 +242,35 @@ export default function UploadPage({ token, onLogout }: Props) {
       .then((data) => {
         console.debug("Respuesta /api/uploads/historico:", data);
         setOps(data.items || []);
+        setTotalRecords(data.total || 0);
+        setTotalPages(data.total_pages || 1);
       })
       .catch((e) =>
         setOpsError(typeof e === "string" ? e : "Error desconocido"),
       );
   };
 
+  const handleSort = (column: string) => {
+    if (sortColumn === column) {
+      // Si ya está ordenando por esta columna, cambiar dirección
+      setSortDirection(sortDirection === "asc" ? "desc" : "asc");
+    } else {
+      // Nueva columna, empezar con desc
+      setSortColumn(column);
+      setSortDirection("desc");
+    }
+    setCurrentPage(1); // Resetear a primera página al cambiar ordenamiento
+  };
+
+  const handlePageChange = (newPage: number) => {
+    if (newPage >= 1 && newPage <= totalPages) {
+      setCurrentPage(newPage);
+    }
+  };
+
   useEffect(() => {
     loadHistorico();
-  }, [token]);
+  }, [token, currentPage, sortColumn, sortDirection]);
   // ==================================
 
   // Helpers multi-archivo
@@ -253,7 +306,21 @@ export default function UploadPage({ token, onLogout }: Props) {
 
   // Eventos
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) addFiles(e.target.files);
+    if (!e.target.files?.length) return;
+    
+    // Si no hay tipo seleccionado, mostrar modal para elegir
+    if (!docType) {
+      const incoming = Array.from(e.target.files);
+      const valid = incoming.filter(isAllowed);
+      if (valid.length > 0) {
+        setPendingDropFiles(valid);
+        setShowTypeSelectModal(true);
+      } else {
+        alert("Algunos archivos fueron ignorados (solo PDF o XLSX).");
+      }
+    } else {
+      addFiles(e.target.files);
+    }
     // permite volver a seleccionar el mismo archivo si se borra
     e.target.value = "";
   };
@@ -262,7 +329,40 @@ export default function UploadPage({ token, onLogout }: Props) {
     e.preventDefault();
     e.stopPropagation();
     setDragOver(false);
-    if (e.dataTransfer.files?.length) addFiles(e.dataTransfer.files);
+    
+    if (!e.dataTransfer.files?.length) return;
+    
+    // Si no hay tipo seleccionado, mostrar modal para elegir
+    if (!docType) {
+      const incoming = Array.from(e.dataTransfer.files);
+      const valid = incoming.filter(isAllowed);
+      if (valid.length > 0) {
+        setPendingDropFiles(valid);
+        setShowTypeSelectModal(true);
+      } else {
+        alert("Algunos archivos fueron ignorados (solo PDF o XLSX).");
+      }
+      return;
+    }
+    
+    addFiles(e.dataTransfer.files);
+  };
+
+  /** Maneja la selección de tipo desde el modal */
+  const handleTypeSelect = (type: DocType) => {
+    setDocType(type);
+    setShowTypeSelectModal(false);
+    // Añadir los archivos pendientes
+    if (pendingDropFiles.length > 0) {
+      // dedupe por nombre+tamaño
+      const dedup = [...files];
+      for (const f of pendingDropFiles) {
+        const exists = dedup.some((d) => d.name === f.name && d.size === f.size);
+        if (!exists) dedup.push(f);
+      }
+      setFiles(dedup);
+      setPendingDropFiles([]);
+    }
   };
 
   const startUpload = () => {
@@ -272,7 +372,7 @@ export default function UploadPage({ token, onLogout }: Props) {
     setShowConfirm(true);
   };
 
-  const confirmUpload = async () => {
+  const confirmUpload = async (forceUpload = false) => {
     if (!token || !docType || files.length === 0) return;
     setUploading(true);
     setUploadingIndex(0);
@@ -287,12 +387,32 @@ export default function UploadPage({ token, onLogout }: Props) {
         const fd = new FormData();
         fd.append("file", files[i]);
         fd.append("tipo", docType);
+        fd.append("force", forceUpload ? "true" : "false");
         const res = await fetchWithAuth("/api/upload/", {
           method: "POST",
           token: token || undefined,
           onLogout,
           body: fd,
         });
+        
+        // Manejar duplicado (409)
+        if (res.status === 409) {
+          const data = await res.json();
+          if (data.error === "duplicate_hash") {
+            // Mostrar modal de duplicado
+            setDuplicateInfo(data);
+            setPendingDuplicateFile(files[i]);
+            setShowDuplicateModal(true);
+            setShowConfirm(false);
+            setUploading(false);
+            setUploadingIndex(null);
+            // Guardar los archivos restantes para continuar después
+            const remainingFiles = files.slice(i + 1);
+            setFiles(remainingFiles);
+            return;
+          }
+        }
+        
         if (!res.ok) {
           const t = await res.text();
           console.error(`Fallo subiendo ${files[i].name}:`, t);
@@ -338,43 +458,99 @@ export default function UploadPage({ token, onLogout }: Props) {
     }
   };
 
-  // Reintento webhook n8n cuando status === 'FAILED'
-  const retryWebhook = async (op: Operacion) => {
-    if (!token) return alert("Sesión caducada");
-    setRetryingId(op.id);
-
-    console.info("🔁 Reintentando webhook para:", op);
-
+  // Manejar ignorar duplicado y subir de todos modos
+  const handleDuplicateIgnore = async () => {
+    if (!pendingDuplicateFile || !token || !docType) return;
+    
+    setDuplicateProcessing(true);
+    
     try {
-      const body = { tipo: op.tipo === "FACTURA" ? "factura" : "venta" };
-      const r = await fetchWithAuth(`/api/upload/${op.id}/retry`, {
+      const fd = new FormData();
+      fd.append("file", pendingDuplicateFile);
+      fd.append("tipo", docType);
+      fd.append("force", "true");
+      
+      const res = await fetchWithAuth("/api/upload/", {
         method: "POST",
+        token: token || undefined,
+        onLogout,
+        body: fd,
+      });
+      
+      if (!res.ok) {
+        const t = await res.text();
+        console.error(`Fallo subiendo ${pendingDuplicateFile.name}:`, t);
+        alert(`Fallo subiendo ${pendingDuplicateFile.name}: ${t}`);
+        return;
+      }
+      
+      const result = await res.json();
+      
+      // Para facturas, iniciar el flujo paso a paso
+      if (docType === "factura" && result.upload_id) {
+        setShowDuplicateModal(false);
+        setDuplicateInfo(null);
+        setPendingDuplicateFile(null);
+        setPendingFiles([{ file: pendingDuplicateFile, uploadId: result.upload_id }]);
+        setCurrentFileIndex(0);
+        setCurrentUploadId(result.upload_id);
+        setCurrentFileName(pendingDuplicateFile.name);
+        setProcessingStep("confirm_ai");
+      } else {
+        // Para ventas
+        setShowDuplicateModal(false);
+        setDuplicateInfo(null);
+        setPendingDuplicateFile(null);
+        setShowSuccess(true);
+      }
+      
+      loadHistorico();
+      
+      // Continuar con los archivos restantes si hay
+      if (files.length > 0) {
+        setShowConfirm(true);
+      }
+    } catch (err: any) {
+      alert("Error subiendo archivo: " + (err?.message ?? String(err)));
+    } finally {
+      setDuplicateProcessing(false);
+    }
+  };
+
+  // Manejar cancelar duplicado y eliminar archivo temporal
+  const handleDuplicateCancel = async () => {
+    if (!duplicateInfo?.temp_file || !token) {
+      setShowDuplicateModal(false);
+      setDuplicateInfo(null);
+      setPendingDuplicateFile(null);
+      return;
+    }
+    
+    setDuplicateProcessing(true);
+    
+    try {
+      // Eliminar el archivo temporal del backend
+      await fetchWithAuth("/api/upload/temp", {
+        method: "DELETE",
         token: token || undefined,
         onLogout,
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ file_path: duplicateInfo.temp_file }),
       });
-
-      console.info("📡 Respuesta backend (status):", r.status);
-
-      if (!r.ok) {
-        const errText = await r.text();
-        console.error("❌ Error en retryWebhook:", errText);
-        throw new Error(errText);
-      }
-
-      const data = await r.json();
-      console.info("✅ Respuesta JSON backend:", data);
-
-      await loadHistorico();
-    } catch (e: any) {
-      console.error("⚠️ No se pudo reintentar:", e);
-      alert("No se pudo reintentar: " + (e?.message ?? String(e)));
+    } catch (err) {
+      console.error("Error eliminando archivo temporal:", err);
     } finally {
-      setRetryingId(null);
-      console.info("🔚 Finalizó retryWebhook para:", op.id);
+      setDuplicateProcessing(false);
+      setShowDuplicateModal(false);
+      setDuplicateInfo(null);
+      setPendingDuplicateFile(null);
+      
+      // Continuar con los archivos restantes si hay
+      if (files.length > 0) {
+        setShowConfirm(true);
+      }
     }
   };
 
@@ -448,31 +624,56 @@ export default function UploadPage({ token, onLogout }: Props) {
   const retryProcessing = async () => {
     if (!currentUploadId || !token) return;
     
+    // Obtener el estado actual del upload para determinar qué paso falló
     try {
-      const response = await fetchWithAuth(`/api/processing/${currentUploadId}/retry`, {
-        method: "POST",
+      const statusResponse = await fetchWithAuth(`/api/processing/${currentUploadId}/status`, {
+        method: "GET",
         token: token || undefined,
         onLogout,
       });
       
-      const data = await response.json();
+      if (!statusResponse.ok) {
+        throw new Error("No se pudo obtener el estado del upload");
+      }
       
-      if (data.success) {
-        if (data.status === "AI_COMPLETED") {
-          setAiResult(data.ai_data);
-          setProcessingStep("confirm_drive");
-        } else if (data.status === "COMPLETED") {
-          setDriveUrl(data.drive_url);
-          setProcessingStep("completed");
-        }
-        loadHistorico();
+      const statusData = await statusResponse.json();
+      const currentStatus = statusData.status;
+      
+      // Determinar qué paso reintentar basándose en el estado
+      if (currentStatus === "FAILED_AI" || currentStatus === "UPLOADED" || currentStatus === "QUEUED") {
+        // Falló el procesamiento con IA, reintentar IA
+        await startAIProcessing(currentUploadId);
+      } else if (currentStatus === "FAILED_DRIVE" || currentStatus === "AI_COMPLETED") {
+        // Falló la subida a Drive, reintentar Drive
+        await startDriveUpload(currentUploadId);
       } else {
-        setProcessingError(data.error || "Error en el reintento");
-        setProcessingStep("error");
+        // Estado desconocido, usar endpoint genérico de retry
+        const response = await fetchWithAuth(`/api/processing/${currentUploadId}/retry`, {
+          method: "POST",
+          token: token || undefined,
+          onLogout,
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+          if (data.status === "AI_COMPLETED") {
+            setAiResult(data.ai_data);
+            setProcessingStep("confirm_drive");
+          } else if (data.status === "COMPLETED") {
+            setDriveUrl(data.drive_url);
+            setProcessingStep("completed");
+          }
+          loadHistorico();
+        } else {
+          setProcessingError(data.error || "Error en el reintento");
+          setProcessingStep("error");
+        }
       }
     } catch (err: any) {
       console.error("Error en retryProcessing:", err);
       setProcessingError(err?.message || "Error desconocido");
+      setProcessingStep("error");
     }
   };
   
@@ -848,60 +1049,34 @@ export default function UploadPage({ token, onLogout }: Props) {
         {/* Dropzone */}
         <div
           onDragOver={(e) => {
-            if (disabled) return;
             e.preventDefault();
             setDragOver(true);
           }}
           onDragLeave={() => {
-            if (disabled) return;
             setDragOver(false);
           }}
           onDrop={(e) => {
-            if (disabled) return;
             handleDrop(e);
           }}
           onClick={() => {
-            if (disabled) return;
             inputRef.current?.click();
           }}
           style={{
             maxWidth: 720,
             margin: "12px auto 16px",
             background: "#fff",
-            border: `2px dashed ${
-              dragOver && !disabled ? "#1d4ed8" : "#cbd5e1"
-            }`,
+            border: `2px dashed ${dragOver ? "#1d4ed8" : "#cbd5e1"}`,
             borderRadius: 12,
             minHeight: 260,
             padding: 24,
             textAlign: "center" as const,
-            cursor: disabled ? "not-allowed" : "pointer",
-            opacity: disabled ? 0.5 : 1,
-            filter: disabled ? "grayscale(0.1)" : "none",
-            boxShadow:
-              dragOver && !disabled ? "0 6px 20px rgba(29,78,216,.15)" : "none",
+            cursor: "pointer",
+            boxShadow: dragOver ? "0 6px 20px rgba(29,78,216,.15)" : "none",
             transition:
-              "border-color 120ms ease, box-shadow 120ms ease, opacity 120ms ease",
+              "border-color 120ms ease, box-shadow 120ms ease",
             position: "relative",
           }}
         >
-          {disabled && (
-            <div
-              style={{
-                color: "#1f2937",
-                fontWeight: 700,
-                fontSize: "1rem",
-                background: "rgba(255,255,255,0.85)",
-                padding: "12px 16px",
-                borderRadius: 8,
-                textAlign: "center",
-              }}
-            >
-              Elige <strong style={{ color: "#1d4ed8" }}>Factura</strong> <br />
-              o <strong style={{ color: "#1d4ed8" }}>Venta</strong> para
-              habilitar
-            </div>
-          )}
 
           <p
             style={{
@@ -1097,7 +1272,7 @@ export default function UploadPage({ token, onLogout }: Props) {
                 </button>
                 <button
                   className="modal-btn modal-btn-confirm"
-                  onClick={confirmUpload}
+                  onClick={() => confirmUpload()}
                   disabled={uploading}
                 >
                   Confirmar
@@ -1986,6 +2161,66 @@ export default function UploadPage({ token, onLogout }: Props) {
           </div>
         )}
 
+        {/* Controles de paginación superior */}
+        <div style={{ 
+          display: "flex", 
+          justifyContent: "space-between", 
+          alignItems: "center",
+          marginBottom: "1rem",
+          padding: "0.5rem 0"
+        }}>
+          <div style={{ fontSize: "14px", color: "#5b667a" }}>
+            Total: {totalRecords} registro{totalRecords !== 1 ? "s" : ""}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+            <button
+              onClick={() => handlePageChange(currentPage - 1)}
+              disabled={currentPage === 1}
+              style={{
+                padding: "6px 12px",
+                border: "1px solid #d1d5db",
+                borderRadius: "6px",
+                background: currentPage === 1 ? "#f3f4f6" : "white",
+                color: currentPage === 1 ? "#9ca3af" : "#374151",
+                cursor: currentPage === 1 ? "not-allowed" : "pointer",
+                fontSize: "14px",
+                display: "flex",
+                alignItems: "center",
+                gap: "4px"
+              }}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <polyline points="15,18 9,12 15,6"/>
+              </svg>
+              Anterior
+            </button>
+            <span style={{ fontSize: "14px", color: "#5b667a", minWidth: "100px", textAlign: "center" }}>
+              Página {currentPage} de {totalPages}
+            </span>
+            <button
+              onClick={() => handlePageChange(currentPage + 1)}
+              disabled={currentPage === totalPages}
+              style={{
+                padding: "6px 12px",
+                border: "1px solid #d1d5db",
+                borderRadius: "6px",
+                background: currentPage === totalPages ? "#f3f4f6" : "white",
+                color: currentPage === totalPages ? "#9ca3af" : "#374151",
+                cursor: currentPage === totalPages ? "not-allowed" : "pointer",
+                fontSize: "14px",
+                display: "flex",
+                alignItems: "center",
+                gap: "4px"
+              }}
+            >
+              Siguiente
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <polyline points="9,18 15,12 9,6"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+
         <div style={{ overflowX: "auto" }}>
           <table
             style={{
@@ -1996,12 +2231,64 @@ export default function UploadPage({ token, onLogout }: Props) {
           >
             <thead>
               <tr style={{ background: "#f6f8fa", color: "#163a63" }}>
-                <th style={{ ...th, textAlign: "center" }}>Fecha</th>
-                <th style={{ ...th, textAlign: "center" }}>Tipo</th>
-                <th style={{ ...th, textAlign: "center" }}>Nombre Fichero</th>
-                <th style={{ ...th, textAlign: "center" }}>Descripción</th>
-                <th style={{ ...th, textAlign: "right" }}>Tamaño (KB)</th>
-                <th style={{ ...th, textAlign: "center" }}>Acciones</th>
+                <th 
+                  style={{ ...th, textAlign: "center", cursor: "pointer", userSelect: "none" }}
+                  onClick={() => handleSort("fecha")}
+                >
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "4px" }}>
+                    Fecha
+                    {sortColumn === "fecha" && (
+                      <span>{sortDirection === "asc" ? "↑" : "↓"}</span>
+                    )}
+                  </div>
+                </th>
+                <th 
+                  style={{ ...th, textAlign: "center", cursor: "pointer", userSelect: "none" }}
+                  onClick={() => handleSort("tipo")}
+                >
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "4px" }}>
+                    Tipo
+                    {sortColumn === "tipo" && (
+                      <span>{sortDirection === "asc" ? "↑" : "↓"}</span>
+                    )}
+                  </div>
+                </th>
+                <th 
+                  style={{ ...th, textAlign: "center", cursor: "pointer", userSelect: "none" }}
+                  onClick={() => handleSort("original_filename")}
+                >
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "4px" }}>
+                    Nombre Fichero
+                    {sortColumn === "original_filename" && (
+                      <span>{sortDirection === "asc" ? "↑" : "↓"}</span>
+                    )}
+                  </div>
+                </th>
+                <th style={{ ...th, textAlign: "center" }}>
+                  Descripción
+                </th>
+                <th 
+                  style={{ ...th, textAlign: "right", cursor: "pointer", userSelect: "none" }}
+                  onClick={() => handleSort("tam_bytes")}
+                >
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "4px" }}>
+                    Tamaño (KB)
+                    {sortColumn === "tam_bytes" && (
+                      <span>{sortDirection === "asc" ? "↑" : "↓"}</span>
+                    )}
+                  </div>
+                </th>
+                <th 
+                  style={{ ...th, textAlign: "center", cursor: "pointer", userSelect: "none" }}
+                  onClick={() => handleSort("status")}
+                >
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "4px" }}>
+                    Acciones
+                    {sortColumn === "status" && (
+                      <span>{sortDirection === "asc" ? "↑" : "↓"}</span>
+                    )}
+                  </div>
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -2249,27 +2536,6 @@ export default function UploadPage({ token, onLogout }: Props) {
                               Error
                             </span>
                           );
-                        case "DUPLICATED":
-                          return (
-                            <span 
-                              style={{ 
-                                display: "inline-flex", 
-                                alignItems: "center", 
-                                gap: 4, 
-                                color: "#eab308",
-                                fontSize: 12,
-                                fontWeight: 500
-                              }}
-                              title="Archivo duplicado"
-                            >
-                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
-                                <line x1="12" y1="9" x2="12" y2="13"/>
-                                <line x1="12" y1="17" x2="12.01" y2="17"/>
-                              </svg>
-                              Duplicado
-                            </span>
-                          );
                         default:
                           return <span style={{ color: "#94a3b8" }}>—</span>;
                       }
@@ -2293,6 +2559,66 @@ export default function UploadPage({ token, onLogout }: Props) {
               )}
             </tbody>
           </table>
+        </div>
+
+        {/* Controles de paginación inferior */}
+        <div style={{ 
+          display: "flex", 
+          justifyContent: "space-between", 
+          alignItems: "center",
+          marginTop: "1rem",
+          padding: "0.5rem 0"
+        }}>
+          <div style={{ fontSize: "14px", color: "#5b667a" }}>
+            Total: {totalRecords} registro{totalRecords !== 1 ? "s" : ""}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+            <button
+              onClick={() => handlePageChange(currentPage - 1)}
+              disabled={currentPage === 1}
+              style={{
+                padding: "6px 12px",
+                border: "1px solid #d1d5db",
+                borderRadius: "6px",
+                background: currentPage === 1 ? "#f3f4f6" : "white",
+                color: currentPage === 1 ? "#9ca3af" : "#374151",
+                cursor: currentPage === 1 ? "not-allowed" : "pointer",
+                fontSize: "14px",
+                display: "flex",
+                alignItems: "center",
+                gap: "4px"
+              }}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <polyline points="15,18 9,12 15,6"/>
+              </svg>
+              Anterior
+            </button>
+            <span style={{ fontSize: "14px", color: "#5b667a", minWidth: "100px", textAlign: "center" }}>
+              Página {currentPage} de {totalPages}
+            </span>
+            <button
+              onClick={() => handlePageChange(currentPage + 1)}
+              disabled={currentPage === totalPages}
+              style={{
+                padding: "6px 12px",
+                border: "1px solid #d1d5db",
+                borderRadius: "6px",
+                background: currentPage === totalPages ? "#f3f4f6" : "white",
+                color: currentPage === totalPages ? "#9ca3af" : "#374151",
+                cursor: currentPage === totalPages ? "not-allowed" : "pointer",
+                fontSize: "14px",
+                display: "flex",
+                alignItems: "center",
+                gap: "4px"
+              }}
+            >
+              Siguiente
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <polyline points="9,18 15,12 9,6"/>
+              </svg>
+            </button>
+          </div>
         </div>
       </section>
 
@@ -2628,6 +2954,300 @@ export default function UploadPage({ token, onLogout }: Props) {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Modal de duplicado detectado */}
+      {showDuplicateModal && duplicateInfo && (
+        <div
+          className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60]"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !duplicateProcessing) {
+              handleDuplicateCancel();
+            }
+          }}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden"
+            style={{
+              boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.4)",
+              animation: "fadeIn 0.2s ease-out",
+            }}
+          >
+            {/* Header con icono de advertencia */}
+            <div className="bg-amber-50 p-6 border-b border-amber-100">
+              <div className="flex items-center gap-4">
+                <div 
+                  className="w-14 h-14 rounded-full bg-amber-100 flex items-center justify-center"
+                >
+                  <svg 
+                    width="28" 
+                    height="28" 
+                    viewBox="0 0 24 24" 
+                    fill="none" 
+                    stroke="#d97706" 
+                    strokeWidth="2"
+                    strokeLinecap="round" 
+                    strokeLinejoin="round"
+                  >
+                    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                    <line x1="12" y1="9" x2="12" y2="13"/>
+                    <line x1="12" y1="17" x2="12.01" y2="17"/>
+                  </svg>
+                </div>
+                <div>
+                  <h2 className="text-xl font-bold text-gray-900">
+                    Documento duplicado detectado
+                  </h2>
+                  <p className="text-sm text-gray-600 mt-1">
+                    El archivo que intentas subir ya existe en el sistema
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Contenido */}
+            <div className="p-6 space-y-4">
+              {/* Info del documento existente */}
+              <div className="bg-gray-50 rounded-lg p-4 space-y-2">
+                <div className="flex items-center gap-2">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="2">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                    <polyline points="14,2 14,8 20,8"/>
+                  </svg>
+                  <span className="font-medium text-gray-900">
+                    {duplicateInfo.existing.filename}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 text-sm text-gray-600">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+                    <line x1="16" y1="2" x2="16" y2="6"/>
+                    <line x1="8" y1="2" x2="8" y2="6"/>
+                    <line x1="3" y1="10" x2="21" y2="10"/>
+                  </svg>
+                  <span>
+                    Subido el: {duplicateInfo.existing.uploaded_at 
+                      ? new Date(duplicateInfo.existing.uploaded_at).toLocaleDateString("es-ES", {
+                          year: "numeric",
+                          month: "long",
+                          day: "numeric",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })
+                      : "—"}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 text-sm">
+                  {duplicateInfo.existing.status === "COMPLETED" || duplicateInfo.existing.status === "PROCESSED" ? (
+                    <>
+                      <span className="text-green-600">✅</span>
+                      <span className="text-gray-600">Estado: Procesado</span>
+                    </>
+                  ) : duplicateInfo.existing.status === "FAILED" || duplicateInfo.existing.status === "FAILED_AI" || duplicateInfo.existing.status === "FAILED_DRIVE" ? (
+                    <>
+                      <span className="text-red-600">❌</span>
+                      <span className="text-gray-600">Estado: Error en procesamiento</span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="text-amber-600">⏳</span>
+                      <span className="text-gray-600">Estado: Pendiente de procesar</span>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* Info de la factura si existe */}
+              {duplicateInfo.factura && (
+                <div className="bg-blue-50 rounded-lg p-4 border border-blue-100">
+                  <h4 className="font-semibold text-blue-900 mb-3 flex items-center gap-2">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#1e40af" strokeWidth="2">
+                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                      <path d="M14 2v6h6"/>
+                      <line x1="16" y1="13" x2="8" y2="13"/>
+                      <line x1="16" y1="17" x2="8" y2="17"/>
+                      <line x1="10" y1="9" x2="8" y2="9"/>
+                    </svg>
+                    Datos de la factura:
+                  </h4>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex items-center gap-2">
+                      <span className="text-gray-600">ID:</span>
+                      <span className="font-mono font-medium text-gray-900">
+                        {duplicateInfo.factura.id_factura || "—"}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-gray-600">Total:</span>
+                      <span className="font-bold text-gray-900">
+                        {duplicateInfo.factura.importe_total_euro != null 
+                          ? `${duplicateInfo.factura.importe_total_euro.toFixed(2)} €`
+                          : "—"}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-gray-600">Fecha factura:</span>
+                      <span className="text-gray-900">
+                        {duplicateInfo.factura.fecha || "—"}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <p className="text-gray-600 text-center">
+                ¿Deseas subirlo de todos modos?
+              </p>
+            </div>
+
+            {/* Footer con botones */}
+            <div className="flex justify-end gap-3 p-6 bg-gray-50 border-t border-gray-100">
+              <button
+                type="button"
+                onClick={handleDuplicateCancel}
+                disabled={duplicateProcessing}
+                className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-100 transition-colors font-medium disabled:opacity-50"
+              >
+                Cancelar - omitir subida
+              </button>
+              <button
+                type="button"
+                onClick={handleDuplicateIgnore}
+                disabled={duplicateProcessing}
+                className="px-4 py-2 rounded-lg bg-amber-500 text-white hover:bg-amber-600 transition-colors font-medium disabled:opacity-50 flex items-center gap-2"
+              >
+                {duplicateProcessing ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    Procesando...
+                  </>
+                ) : (
+                  "Ignorar y subir"
+                )}
+              </button>
+            </div>
+          </div>
+
+          <style>{`
+            @keyframes fadeIn {
+              from { opacity: 0; transform: scale(0.95); }
+              to { opacity: 1; transform: scale(1); }
+            }
+          `}</style>
+        </div>
+      )}
+
+      {/* Modal de selección de tipo de documento */}
+      {showTypeSelectModal && pendingDropFiles.length > 0 && (
+        <div
+          className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60]"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setShowTypeSelectModal(false);
+              setPendingDropFiles([]);
+            }
+          }}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden"
+            style={{
+              boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.4)",
+              animation: "fadeIn 0.2s ease-out",
+            }}
+          >
+            {/* Header */}
+            <div className="bg-blue-50 p-6 border-b border-blue-100">
+              <div className="flex items-center gap-4">
+                <div className="w-14 h-14 rounded-full bg-blue-100 flex items-center justify-center">
+                  <svg 
+                    width="28" 
+                    height="28" 
+                    viewBox="0 0 24 24" 
+                    fill="none" 
+                    stroke="#2563eb" 
+                    strokeWidth="2"
+                    strokeLinecap="round" 
+                    strokeLinejoin="round"
+                  >
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                    <polyline points="14,2 14,8 20,8"/>
+                    <line x1="12" y1="11" x2="12" y2="17"/>
+                    <line x1="9" y1="14" x2="15" y2="14"/>
+                  </svg>
+                </div>
+                <div>
+                  <h2 className="text-xl font-bold text-gray-900">
+                    Selecciona el tipo de documento
+                  </h2>
+                  <p className="text-sm text-gray-600 mt-1">
+                    {pendingDropFiles.length === 1 
+                      ? `Has arrastrado: ${pendingDropFiles[0].name}`
+                      : `Has arrastrado ${pendingDropFiles.length} archivos`
+                    }
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Contenido */}
+            <div className="p-6">
+              <p className="text-gray-600 text-center mb-6">
+                ¿Qué tipo de documentos son?
+              </p>
+              
+              <div className="flex gap-4 justify-center">
+                <button
+                  type="button"
+                  onClick={() => handleTypeSelect("factura")}
+                  className="flex-1 py-4 px-6 rounded-xl border-2 border-blue-200 bg-blue-50 hover:bg-blue-100 hover:border-blue-400 transition-all font-semibold text-blue-700 flex flex-col items-center gap-2"
+                >
+                  <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                    <polyline points="14,2 14,8 20,8"/>
+                    <line x1="16" y1="13" x2="8" y2="13"/>
+                    <line x1="16" y1="17" x2="8" y2="17"/>
+                    <polyline points="10,9 9,9 8,9"/>
+                  </svg>
+                  Factura
+                </button>
+                
+                <button
+                  type="button"
+                  onClick={() => handleTypeSelect("venta")}
+                  className="flex-1 py-4 px-6 rounded-xl border-2 border-green-200 bg-green-50 hover:bg-green-100 hover:border-green-400 transition-all font-semibold text-green-700 flex flex-col items-center gap-2"
+                >
+                  <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <circle cx="9" cy="21" r="1"/>
+                    <circle cx="20" cy="21" r="1"/>
+                    <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/>
+                  </svg>
+                  Venta
+                </button>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="flex justify-center p-4 bg-gray-50 border-t border-gray-100">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowTypeSelectModal(false);
+                  setPendingDropFiles([]);
+                }}
+                className="px-4 py-2 rounded-lg text-gray-600 hover:text-gray-800 hover:bg-gray-100 transition-colors font-medium"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+
+          <style>{`
+            @keyframes fadeIn {
+              from { opacity: 0; transform: scale(0.95); }
+              to { opacity: 1; transform: scale(1); }
+            }
+          `}</style>
         </div>
       )}
     </div>

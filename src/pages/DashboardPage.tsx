@@ -26,7 +26,15 @@ export default function DashboardPage({ token, onLogout }: { token: string; onLo
   const [ops, setOps] = useState<Operacion[]>([])
   const [opsError, setOpsError] = useState<string | null>(null)
 
+  // Refs para controlar si los datos ya se han cargado (solo una vez al montar)
+  const hasLoadedResumenRef = useRef(false)
+  const hasLoadedHistoricoRef = useRef(false)
+
   useEffect(() => {
+    // Solo cargar datos una vez cuando el componente se monta
+    if (hasLoadedResumenRef.current) return
+    hasLoadedResumenRef.current = true
+
     fetchWithAuth('http://localhost:8000/dashboard/', {
       token,
       onLogout,
@@ -37,8 +45,12 @@ export default function DashboardPage({ token, onLogout }: { token: string; onLo
       .finally(() => setLoading(false))
   }, [token, onLogout])
 
-  // 🟢 nuevo: cargar histórico (independiente del dashboard)
+  // 🟢 nuevo: cargar histórico (independiente del dashboard) - solo una vez
   useEffect(() => {
+    // Solo cargar histórico una vez cuando el componente se monta
+    if (hasLoadedHistoricoRef.current) return
+    hasLoadedHistoricoRef.current = true
+
     fetchWithAuth('http://localhost:8000/dashboard/historico?limit=10', {
       //cambiar limite a 60 dias en prod
       token,

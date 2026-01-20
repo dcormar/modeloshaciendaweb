@@ -19,20 +19,34 @@ from contextlib import asynccontextmanager
 
 
 
-# Configuración global de logging
+# Configuración global de logging desde .env
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 log_path = os.path.join(os.path.dirname(__file__), "log/modeloshaciendaweb.log")
 log_format = '%(asctime)s %(levelname)s %(name)s %(message)s'
+
+# Mapear string a nivel de logging
+log_level_map = {
+    "DEBUG": logging.DEBUG,
+    "INFO": logging.INFO,
+    "WARNING": logging.WARNING,
+    "ERROR": logging.ERROR,
+    "CRITICAL": logging.CRITICAL,
+}
+effective_log_level = log_level_map.get(LOG_LEVEL, logging.INFO)
+
 logging.basicConfig(
-    level=logging.INFO,
+    level=effective_log_level,
     format=log_format,
     handlers=[
         logging.FileHandler(log_path, encoding='utf-8'),
         logging.StreamHandler()
     ]
 )
-for logger_name in ("httpx", "uvicorn", "uvicorn.error", "uvicorn.access"):
+# Silenciar loggers ruidosos de terceros
+for logger_name in ("httpx", "httpcore", "uvicorn", "uvicorn.error", "uvicorn.access", "googleapiclient", "urllib3"):
     logging.getLogger(logger_name).setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
+logger.info(f"Nivel de logging configurado: {LOG_LEVEL}")
 
 # ----------------------------------------
 # Lifespan: se ejecuta antes de montar la app

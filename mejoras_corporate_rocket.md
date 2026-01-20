@@ -1,6 +1,6 @@
 # Mejoras Futuras - Corporate Rocket
 
-## Google Drive - Migración a Shared Drives (Google Workspace)
+## 1. Google Drive - Migración a Shared Drives (Google Workspace)
 
 **Estado**: Pendiente  
 **Prioridad**: Media  
@@ -57,4 +57,38 @@ service.permissions().create(
 
 ---
 
-*Última actualización: 2026-01-13*
+1. Agente de categorización inteligente
+En lugar de que Gemini solo extraiga datos, un agente podría:
+Categorizar automáticamente el gasto comparando con categorías existentes en tu BD
+Detectar proveedores recurrentes y sugerir datos basados en histórico
+Identificar facturas duplicadas antes de procesarlas
+2. Validación y corrección automática
+Un agente con herramientas (tools) que pueda:
+Validar el NIF/VAT consultando APIs externas
+Corregir errores de OCR comparando con datos conocidos
+Verificar tipos de cambio consultando APIs de divisas
+3. Chat conversacional sobre facturas
+Un chatbot interno que use RAG (Retrieval Augmented Generation):
+"¿Cuánto gasté en software el último trimestre?"
+"Muéstrame las facturas pendientes de pago"
+"Compara los gastos de este mes con el anterior"
+4. Procesamiento de múltiples formatos
+Extender a otros documentos usando diferentes chains:
+Contratos (extraer fechas, partes, obligaciones)
+Recibos de tarjeta
+Extractos bancarios
+Tickets de compra
+5. Flujo de aprobación inteligente
+Un agente que decida automáticamente:
+Si una factura necesita aprobación manual (importe alto, proveedor nuevo)
+A quién asignarla según el departamento/categoría
+Alertar sobre anomalías (factura duplicada, importe inusual)
+6. Multi-LLM / Fallback
+LangChain facilita:
+Usar Gemini para extracción y Claude para validación
+Fallback automático si un proveedor falla
+A/B testing entre modelos
+
+---
+
+*Última actualización: 2026-01-16*

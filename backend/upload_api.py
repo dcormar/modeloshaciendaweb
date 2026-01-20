@@ -1,10 +1,12 @@
 # upload_api.py
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, Request, Body
+from fastapi.responses import JSONResponse
 from pathlib import Path
 import shutil, re, os, logging, hashlib, httpx
 from auth import get_current_user, UserInDB
 from datetime import datetime
 import certifi
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/upload", tags=["upload"])
@@ -103,6 +105,57 @@ def parse_importe_a_eur(importe_str: str | float | None, tipo_cambio: str | floa
         return None
     return round(importe * tc, 2)
 
+
+# ===== Helper: Buscar duplicado por SHA256 =====
+async def check_duplicate_hash(sha256: str, tipo: str) -> Optional[dict]:
+    """
+    Busca si ya existe un upload con el mismo hash SHA256.
+    Retorna el registro existente o None si no hay duplicado.
+    """
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return None
+    
+    table = "ventas_uploads" if tipo == "venta" else "uploads"
+    
+    try:
+        async with httpx.AsyncClient(timeout=10, verify=certifi.where()) as client:
+            resp = await client.get(
+                f"{SUPABASE_URL}/rest/v1/{table}?sha256=eq.{sha256}&select=id,original_filename,created_at,status,factura_id",
+                headers=supabase_headers()
+            )
+        if resp.status_code == 200:
+            rows = resp.json()
+            if rows and len(rows) > 0:
+                return rows[0]
+        return None
+    except Exception as e:
+        logger.exception("Error buscando duplicado por hash: %s", e)
+        return None
+
+
+async def get_factura_by_id(factura_id: int) -> Optional[dict]:
+    """
+    Obtiene información de una factura por su ID.
+    """
+    if not SUPABASE_URL or not SUPABASE_KEY or not factura_id:
+        return None
+    
+    try:
+        async with httpx.AsyncClient(timeout=10, verify=certifi.where()) as client:
+            resp = await client.get(
+                f"{SUPABASE_URL}/rest/v1/facturas?id=eq.{factura_id}&select=id,id_ext,fecha,importe_total_euro",
+                headers=supabase_headers()
+            )
+        if resp.status_code == 200:
+            rows = resp.json()
+            if rows and len(rows) > 0:
+                return rows[0]
+        return None
+    except Exception as e:
+        logger.exception("Error obteniendo factura: %s", e)
+        return None
+
+
 # ===== Helper: Insertar registro en automations =====
 async def insert_automation_record(n8n_workflow_name: str) -> str | None:
     """
@@ -173,6 +226,7 @@ async def upload_file(
     file: UploadFile = File(...),
     tipo: str = Form(...),
     iaprocess: str = Form("true"),  # Por defecto true para mantener compatibilidad
+    force: str = Form("false"),  # Si true, ignora verificación de duplicados
     current_user: UserInDB = Depends(get_current_user),
 ):
     base = get_upload_base()
@@ -206,6 +260,40 @@ async def upload_file(
     mime_type = file.content_type or ("application/pdf" if fname_lower.endswith(".pdf") else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     sha256 = sha256_file(dest_file)
     storage_path = str(dest_file)
+
+    # Verificar duplicado por SHA256 (solo si force != "true")
+    if force.lower() != "true":
+        existing = await check_duplicate_hash(sha256, tipo)
+        if existing:
+            logger.info("Duplicado detectado: hash=%s, archivo existente=%s", sha256, existing.get("original_filename"))
+            
+            # Buscar info de la factura asociada si existe
+            factura_info = None
+            factura_id = existing.get("factura_id")
+            if factura_id:
+                factura = await get_factura_by_id(factura_id)
+                if factura:
+                    factura_info = {
+                        "id_factura": factura.get("id_ext"),
+                        "importe_total_euro": factura.get("importe_total_euro"),
+                        "fecha": factura.get("fecha"),
+                    }
+            
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "error": "duplicate_hash",
+                    "message": "Ya existe un documento con el mismo contenido",
+                    "existing": {
+                        "id": existing.get("id"),
+                        "filename": existing.get("original_filename"),
+                        "uploaded_at": existing.get("created_at"),
+                        "status": existing.get("status"),
+                    },
+                    "factura": factura_info,
+                    "temp_file": storage_path,  # Para poder eliminarlo si el usuario cancela
+                }
+            )
 
     # Insert metadatos (UPLOADED) -> Supabase (seguimos verificando TLS aquí)
     try:
@@ -301,6 +389,48 @@ async def upload_file(
         "db_row": db_row,
         "upload_id": upload_id,
     }
+
+# =========================
+#   ELIMINAR ARCHIVO TEMPORAL (cuando usuario cancela duplicado)
+# =========================
+@router.delete("/temp", status_code=200)
+async def delete_temp_file(
+    file_path: str = Body(..., embed=True),
+    current_user: UserInDB = Depends(get_current_user),
+):
+    """
+    Elimina un archivo temporal del disco cuando el usuario cancela
+    la subida de un duplicado.
+    Solo permite eliminar archivos dentro del directorio de uploads del usuario.
+    """
+    base = get_upload_base()
+    user_folder = base / sanitize_folder(current_user.username)
+    
+    try:
+        target_path = Path(file_path)
+        
+        # Verificar que el archivo está dentro del directorio del usuario (seguridad)
+        target_resolved = target_path.resolve()
+        user_folder_resolved = user_folder.resolve()
+        
+        if not str(target_resolved).startswith(str(user_folder_resolved)):
+            logger.warning("Intento de eliminar archivo fuera del directorio del usuario: %s", file_path)
+            raise HTTPException(status_code=403, detail="No tienes permiso para eliminar este archivo")
+        
+        if target_path.exists():
+            target_path.unlink()
+            logger.info("Archivo temporal eliminado: %s", file_path)
+            return {"ok": True, "message": "Archivo eliminado correctamente"}
+        else:
+            logger.warning("Archivo temporal no encontrado: %s", file_path)
+            return {"ok": True, "message": "El archivo ya no existe"}
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Error eliminando archivo temporal: %s", e)
+        raise HTTPException(status_code=500, detail=f"Error eliminando archivo: {str(e)}")
+
 
 # =========================
 #   RETRY WEBHOOK (FACTURA/VENTA)
