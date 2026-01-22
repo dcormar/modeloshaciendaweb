@@ -14,6 +14,7 @@ from upload_api import router as upload_router
 from upload_historico_api import router as upload_historico_router
 from generate_invoice_api import router as generate_invoice_router
 from processing_api import router as processing_router
+from consulta_api import router as consulta_router
 from contextlib import asynccontextmanager
 
 
@@ -107,6 +108,7 @@ app.include_router(upload_router)
 app.include_router(upload_historico_router)
 app.include_router(generate_invoice_router)
 app.include_router(processing_router)
+app.include_router(consulta_router)
 
 logger.info("Routers montados y aplicación FastAPI iniciada")
 

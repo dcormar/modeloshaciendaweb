@@ -31,7 +31,7 @@ cryptography==43.0.3
 reportlab==4.0.9
 
 # Google AI
-google-generativeai==0.8.4
+google-generativeai>=0.7.0,<0.8.0
 
 # OpenAI (fallback para rate limits)
 openai==1.58.1
@@ -43,3 +43,19 @@ google-auth-oauthlib==1.2.1
 
 # SSL certificates
 certifi==2024.12.14
+
+# Web automation
+playwright==1.48.0
+
+# LangChain & LangGraph for agent workflows
+# Versiones compatibles: langchain-core 0.3.x con langgraph 0.2.x (más reciente)
+langchain==0.3.0
+langchain-google-genai==2.0.0
+langchain-openai==0.2.0
+langgraph==0.2.40
+
+# Web search for online capabilities
+duckduckgo-search==6.1.0
+
+# Async support for tools
+nest-asyncio==1.6.0

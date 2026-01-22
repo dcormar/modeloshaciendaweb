@@ -13,15 +13,87 @@ SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/facturas", tags=["facturas"])
 
+
+def build_supabase_filters(
+    desde: Optional[str] = None,
+    hasta: Optional[str] = None,
+    proveedor: Optional[str] = None,
+    pais_origen: Optional[str] = None,
+    importe_min: Optional[float] = None,
+    importe_max: Optional[float] = None,
+    categoria: Optional[str] = None,
+    moneda: Optional[str] = None,
+    limit: Optional[int] = None,
+    offset: Optional[int] = None
+) -> List[str]:
+    """
+    Construye lista de parámetros de filtro para Supabase PostgREST.
+    Retorna lista de strings en formato 'campo=operador.valor'
+    
+    Args:
+        desde: Fecha inicio (YYYY-MM-DD) - usa operador gte
+        hasta: Fecha fin (YYYY-MM-DD) - usa operador lte
+        proveedor: Búsqueda parcial (ilike) - búsqueda case-insensitive
+        pais_origen: Igualdad exacta (eq)
+        importe_min: Importe mínimo (gte) sobre importe_total_euro
+        importe_max: Importe máximo (lte) sobre importe_total_euro
+        categoria: Igualdad exacta (eq)
+        moneda: Igualdad exacta (eq)
+        limit: Límite de resultados
+        offset: Offset para paginación
+    
+    Returns:
+        Lista de strings con parámetros de filtro para Supabase
+    """
+    params = []
+    
+    # Filtros de fecha
+    if desde:
+        params.append(f"fecha_dt=gte.{desde}")
+    if hasta:
+        params.append(f"fecha_dt=lte.{hasta}")
+    
+    # Filtro de proveedor (búsqueda parcial, case-insensitive)
+    if proveedor and proveedor.strip():
+        # Escapar caracteres especiales para URL
+        proveedor_escaped = proveedor.strip().replace("%", "%25").replace("&", "%26")
+        params.append(f"proveedor=ilike.*{proveedor_escaped}*")
+    
+    # Filtro de país (igualdad exacta)
+    if pais_origen and pais_origen.strip():
+        params.append(f"pais_origen=eq.{pais_origen.strip()}")
+    
+    # Filtros de importe
+    if importe_min is not None:
+        params.append(f"importe_total_euro=gte.{importe_min}")
+    if importe_max is not None:
+        params.append(f"importe_total_euro=lte.{importe_max}")
+    
+    # Filtro de categoría (igualdad exacta)
+    if categoria and categoria.strip():
+        params.append(f"categoria=eq.{categoria.strip()}")
+    
+    # Filtro de moneda (igualdad exacta)
+    if moneda and moneda.strip():
+        params.append(f"moneda=eq.{moneda.strip().upper()}")
+    
+    # Paginación
+    if limit is not None:
+        params.append(f"limit={limit}")
+    if offset is not None:
+        params.append(f"offset={offset}")
+    
+    return params
+
 class Factura(BaseModel):
     id: Optional[int]
     fecha: str
     proveedor: str
     #total: Optional[float] = None
-    importe_sin_iva_euro: float
-    importe_total_euro: float
-    pais_origen: str
-    ubicacion_factura: str
+    importe_sin_iva_euro: Optional[float] = None
+    importe_total_euro: Optional[float] = None
+    pais_origen: Optional[str] = None
+    ubicacion_factura: Optional[str] = None
 
 class FacturaManual(BaseModel):
     fecha: str
@@ -43,19 +115,89 @@ class FacturaManual(BaseModel):
 
 @router.get("/", response_model=List[Factura])
 async def get_facturas(
-    desde: str = Query(None, description="Fecha inicio YYYY-MM-DD"),
-    hasta: str = Query(None, description="Fecha fin YYYY-MM-DD")
+    desde: Optional[str] = Query(None, description="Fecha inicio YYYY-MM-DD"),
+    hasta: Optional[str] = Query(None, description="Fecha fin YYYY-MM-DD"),
+    proveedor: Optional[str] = Query(None, description="Filtrar por proveedor (búsqueda parcial)"),
+    pais_origen: Optional[str] = Query(None, description="Filtrar por país de origen"),
+    importe_min: Optional[float] = Query(None, description="Importe mínimo en EUR"),
+    importe_max: Optional[float] = Query(None, description="Importe máximo en EUR"),
+    categoria: Optional[str] = Query(None, description="Filtrar por categoría"),
+    moneda: Optional[str] = Query(None, description="Filtrar por moneda"),
+    limit: Optional[int] = Query(None, description="Límite de resultados (máx 1000)", ge=1, le=1000),
+    offset: Optional[int] = Query(None, description="Offset para paginación", ge=0)
 ):
-    logger.debug(f"Recibida petición de facturas desde={desde} hasta={hasta}")
-    url = f"{SUPABASE_URL}/rest/v1/facturas"
-    params = []
+    """
+    Obtiene facturas con múltiples filtros opcionales.
+    Mantiene compatibilidad: si solo se pasan desde/hasta, funciona igual que antes.
+    """
+    logger.debug(f"Recibida petición de facturas - desde={desde}, hasta={hasta}, proveedor={proveedor}, "
+                 f"pais_origen={pais_origen}, importe_min={importe_min}, importe_max={importe_max}, "
+                 f"categoria={categoria}, moneda={moneda}, limit={limit}, offset={offset}")
+    
+    # Validaciones
+    if importe_min is not None and importe_min < 0:
+        raise HTTPException(
+            status_code=400,
+            detail=f"importe_min debe ser mayor o igual a 0, se recibió: {importe_min}"
+        )
+    
+    if importe_max is not None and importe_max < 0:
+        raise HTTPException(
+            status_code=400,
+            detail=f"importe_max debe ser mayor o igual a 0, se recibió: {importe_max}"
+        )
+    
+    if importe_min is not None and importe_max is not None:
+        if importe_min > importe_max:
+            raise HTTPException(
+                status_code=400,
+                detail=f"importe_min ({importe_min}) no puede ser mayor que importe_max ({importe_max})"
+            )
+    
+    # Validar formato de fechas si se proporcionan
     if desde:
-        params.append(f"fecha_dt=gte.{desde}")
+        try:
+            datetime.strptime(desde, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Formato de fecha 'desde' inválido. Se espera YYYY-MM-DD, se recibió: {desde}"
+            )
+    
     if hasta:
-        params.append(f"fecha_dt=lte.{hasta}")
-    if params:
-        url += '?' + '&'.join(params)
+        try:
+            datetime.strptime(hasta, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Formato de fecha 'hasta' inválido. Se espera YYYY-MM-DD, se recibió: {hasta}"
+            )
+    
+    # Nota: No requerimos filtros obligatorios para mantener compatibilidad
+    # Si no se proporciona ningún filtro, se retornan todas las facturas (puede ser costoso)
+    # En producción, considerar requerir al menos desde/hasta
+    
+    # Construir filtros usando el helper
+    filter_params = build_supabase_filters(
+        desde=desde,
+        hasta=hasta,
+        proveedor=proveedor,
+        pais_origen=pais_origen,
+        importe_min=importe_min,
+        importe_max=importe_max,
+        categoria=categoria,
+        moneda=moneda,
+        limit=limit,
+        offset=offset
+    )
+    
+    # Construir URL
+    url = f"{SUPABASE_URL}/rest/v1/facturas"
+    if filter_params:
+        url += '?' + '&'.join(filter_params)
+    
     headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
+    
     async with httpx.AsyncClient() as client:
         logger.debug(f"Consultando Supabase: {url}")
         r = await client.get(url, headers=headers)
@@ -64,7 +206,7 @@ async def get_facturas(
             logger.error(f"Supabase error {r.status_code}: {r.text}")
             raise HTTPException(status_code=500, detail=f"Error consultando Supabase: {r.text}")
         data = r.json()
-        logger.info(f"Facturas recuperadas: {data}")
+        logger.info(f"Facturas recuperadas: {len(data)} registros")
         return data
 
 @router.post("/", response_model=Factura)

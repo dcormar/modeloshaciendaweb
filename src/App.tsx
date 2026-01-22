@@ -5,6 +5,7 @@ import UploadPage from './pages/UploadPage'
 import EstadoModelosPage from './pages/EstadoModelosPage'
 import MesDetallePage from './pages/MesDetallePage'
 import CreateInvoicePage from './pages/CreateInvoicePage'
+import ConsultaPage from './pages/ConsultaPage'
 import './App.css'
 
 // Importamos el logo desde src/assets
@@ -294,6 +295,13 @@ function App() {
               Crear Facturas
             </button>
             <button
+              onClick={() => setPage('consulta')}
+              className={`navlink ${page === 'consulta' ? 'active' : ''}`}
+              aria-current={page === 'consulta' ? 'page' : undefined}
+            >
+              ✨ Consulta
+            </button>
+            <button
               onClick={() => setPage('mesdetalle')}
               className={`navlink ${page === 'mesdetalle' ? 'active' : ''}`}
               aria-current={page === 'mesdetalle' ? 'page' : undefined}
@@ -340,6 +348,7 @@ function App() {
         {page === 'estado' && <EstadoModelosPage token={token} onLogout={() => handleLogout('EstadoModelosPage')} />}
         {page === 'mesdetalle' && <MesDetallePage token={token} onLogout={() => handleLogout('MesDetallePage')} />}
         {page === 'crear-factura' && <CreateInvoicePage token={token} onLogout={() => handleLogout('CreateInvoicePage')} />}
+        {page === 'consulta' && <ConsultaPage token={token} onLogout={() => handleLogout('ConsultaPage')} />}
       </main>
     </div>
   )
