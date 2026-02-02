@@ -6,6 +6,7 @@ import EstadoModelosPage from './pages/EstadoModelosPage'
 import MesDetallePage from './pages/MesDetallePage'
 import CreateInvoicePage from './pages/CreateInvoicePage'
 import ConsultaPage from './pages/ConsultaPage'
+import ChatAssistant from './components/ChatAssistant'
 import './App.css'
 
 // Importamos el logo desde src/assets
@@ -350,6 +351,9 @@ function App() {
         {page === 'crear-factura' && <CreateInvoicePage token={token} onLogout={() => handleLogout('CreateInvoicePage')} />}
         {page === 'consulta' && <ConsultaPage token={token} onLogout={() => handleLogout('ConsultaPage')} />}
       </main>
+
+      {/* Asistente IA Overlay - disponible en todas las páginas */}
+      <ChatAssistant token={token} onLogout={() => handleLogout('ChatAssistant')} />
     </div>
   )
 }

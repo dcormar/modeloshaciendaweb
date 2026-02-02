@@ -120,7 +120,7 @@ async def _extract_with_gemini(file_path: Path) -> str:
     
     try:
         # Crear el modelo y generar contenido
-        model = genai.GenerativeModel("gemini-2.0-flash-lite")
+        model = genai.GenerativeModel("gemini-2.5-flash-lite")
         response = model.generate_content([uploaded_file, EXTRACTION_PROMPT])
         return response.text
     finally:

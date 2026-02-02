@@ -111,7 +111,7 @@ Responde SOLO con un JSON válido:
 """
 
 
-def _call_llm(prompt: str, model: str = "gemini-2.0-flash-lite") -> str:
+def _call_llm(prompt: str, model: str = "gemini-2.5-flash-lite") -> str:
     """Llama a la API de Gemini o OpenAI."""
     logger.debug(f"[LLM] Llamando a modelo: {model}")
     logger.debug(f"[LLM] Longitud del prompt: {len(prompt)} caracteres")

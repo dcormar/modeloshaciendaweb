@@ -15,6 +15,8 @@ from upload_historico_api import router as upload_historico_router
 from generate_invoice_api import router as generate_invoice_router
 from processing_api import router as processing_router
 from consulta_api import router as consulta_router
+from assistant_api import router as assistant_router
+from telegram_webhook_api import router as telegram_webhook_router
 from contextlib import asynccontextmanager
 
 
@@ -79,6 +81,22 @@ async def lifespan(app: FastAPI):
             )
 
         logger.info("Conexión con Supabase verificada correctamente.")
+        
+        # Verificar acceso a la tabla user_contacts
+        logger.info("Verificando acceso a la tabla user_contacts...")
+        try:
+            from services.supabase_rest import SupabaseREST
+            
+            sb = SupabaseREST()
+            result = await sb.get("user_contacts", "id", {})
+            
+            if result and len(result) > 0:
+                logger.info(f"Acceso a user_contacts verificado correctamente (encontrado al menos 1 elemento).")
+            else:
+                logger.info("Acceso a user_contacts verificado correctamente (tabla vacía pero accesible).")
+        except Exception as table_error:
+            logger.exception(f"Error verificando tabla user_contacts: {table_error}")
+            raise RuntimeError(f"Error accediendo a la tabla user_contacts: {str(table_error)}") from table_error
 
     except httpx.RequestError as e:
         logger.error(f"No se pudo conectar con Supabase: {e}")
@@ -109,6 +127,8 @@ app.include_router(upload_historico_router)
 app.include_router(generate_invoice_router)
 app.include_router(processing_router)
 app.include_router(consulta_router)
+app.include_router(assistant_router)
+app.include_router(telegram_webhook_router)
 
 logger.info("Routers montados y aplicación FastAPI iniciada")
 

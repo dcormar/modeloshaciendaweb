@@ -73,7 +73,7 @@ def get_llm(use_openai: bool = False, primary_llm: Optional[str] = None):
             if GOOGLE_API_KEY:
                 logger.info("[GRAPH] Usando Gemini como LLM (desde estado)")
                 return ChatGoogleGenerativeAI(
-                    model="gemini-2.0-flash-lite",
+                    model="gemini-2.5-flash-lite",
                     temperature=0.1,
                     google_api_key=GOOGLE_API_KEY
                 )
@@ -96,7 +96,7 @@ def get_llm(use_openai: bool = False, primary_llm: Optional[str] = None):
     try:
         logger.info("[GRAPH] Usando Gemini como LLM")
         return ChatGoogleGenerativeAI(
-            model="gemini-2.0-flash-lite",
+            model="gemini-2.5-flash-lite",
             temperature=0.1,
             google_api_key=GOOGLE_API_KEY
         )
@@ -412,15 +412,14 @@ Ejemplo para "{query}":
                     logger.info(f"[GRAPH] LLM respondió directamente sin herramientas: {response.content[:100]}")
                     # No terminar aquí, dejar que reevaluate decida
         except Exception as tool_calls_error:
-            logger.error(f"[GRAPH] Error verificando tool_calls: {tool_calls_error}")
+            logger.exception(f"[GRAPH] Error verificando tool_calls: {tool_calls_error}")
             logger.warning("[GRAPH] Continuando sin tool calls debido a error")
         
         return state
         
     except Exception as e:
+        logger.exception(f"[GRAPH] Error en plan_node: {e}")
         error_traceback = traceback.format_exc()
-        logger.error(f"[GRAPH] Error en plan_node: {e}")
-        logger.error(f"[GRAPH] Traceback completo:\n{error_traceback}")
         state["errors"].append(f"Error en planificación: {str(e)}\nTraceback: {error_traceback}")
         state["should_finish"] = True
         return state
@@ -661,7 +660,7 @@ Responde SOLO con un JSON válido:
         return state
         
     except Exception as e:
-        logger.error(f"[GRAPH] Error en reevaluate_node: {e}")
+        logger.exception(f"[GRAPH] Error en reevaluate_node: {e}")
         # En caso de error, terminar para evitar loops infinitos
         state["should_finish"] = True
         state["errors"].append(f"Error en reevaluación: {str(e)}")
@@ -768,7 +767,7 @@ Responde SOLO con un JSON válido:
         return state
         
     except Exception as e:
-        logger.error(f"[GRAPH] Error en format_node: {e}")
+        logger.exception(f"[GRAPH] Error en format_node: {e}")
         # Fallback: retornar resultado básico
         state["final_result"] = {
             "format": "text",
