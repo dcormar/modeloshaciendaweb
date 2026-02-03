@@ -174,7 +174,7 @@ export default function CreateInvoicePage({ token, onLogout }: Props) {
         notas: form.notas.trim() || null,
       }
 
-      const response = await fetchWithAuth('http://localhost:8000/generate-invoice/', {
+      const response = await fetchWithAuth('/api/generate-invoice/', {
         method: 'POST',
         token,
         onLogout,
@@ -210,7 +210,7 @@ export default function CreateInvoicePage({ token, onLogout }: Props) {
     setError(null)
 
     try {
-      const response = await fetchWithAuth('http://localhost:8000/generate-invoice/ai', {
+      const response = await fetchWithAuth('/api/generate-invoice/ai', {
         method: 'POST',
         token,
         onLogout,

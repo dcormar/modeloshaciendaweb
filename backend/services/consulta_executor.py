@@ -356,7 +356,7 @@ async def execute_sql_action(action: Dict[str, Any], user_id: Optional[str] = No
     raise ValueError(
         "Las consultas SQL directas no están disponibles por seguridad. "
         "Por favor, usa acciones de tipo 'api' para consultas a tablas. "
-        "Las APIs disponibles incluyen: /api/facturas, /ventas, /dashboard/"
+        "Las APIs disponibles incluyen: /api/facturas/, /api/ventas/, /api/dashboard/"
     )
 
     # Si llegamos aquí, intentar usar RPC (requiere función en Supabase)

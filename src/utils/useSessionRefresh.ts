@@ -5,6 +5,10 @@ import { fetchWithAuth } from './fetchWithAuth';
 const SESSION_DURATION_MINUTES = 15;      // Duración total del token (debe coincidir con backend)
 const REFRESH_BEFORE_EXPIRY_MINUTES = 2;  // Refrescar 2 minutos ANTES de que expire
 const INACTIVITY_WARNING_MINUTES = 14;    // Mostrar aviso de inactividad
+const SESSION_CHECK_INTERVAL_MS = 60 * 1000; // Comprobar tiempo restante cada minuto
+
+// Logs de sesión solo en modo debug
+const DEBUG_SESSION = false;
 
 interface SessionRefreshResult {
   showExpiryWarning: boolean;
@@ -81,25 +85,25 @@ export function useSessionRefresh(
     }
 
     isRefreshingRef.current = true;
-    console.log('[Session] Refrescando token...');
-    
+    if (DEBUG_SESSION) console.log('[Session] Refrescando token...');
+
     try {
-      const response = await fetchWithAuth('http://localhost:8000/auth/refresh', {
+      const response = await fetchWithAuth('/api/auth/refresh', {
         method: 'POST',
         token,
       });
 
       if (response.ok) {
         const data = await response.json();
-        console.log('[Session] Token refrescado exitosamente');
+        if (DEBUG_SESSION) console.log('[Session] Token refrescado exitosamente');
         onTokenUpdate(data.access_token);
         return true;
       } else {
-        console.warn('[Session] Fallo refresh:', response.status);
+        if (DEBUG_SESSION) console.warn('[Session] Fallo refresh:', response.status);
         return false;
       }
     } catch (error) {
-      console.error('[Session] Error refresh:', error);
+      if (DEBUG_SESSION) console.error('[Session] Error refresh:', error);
       return false;
     } finally {
       isRefreshingRef.current = false;
@@ -117,14 +121,14 @@ export function useSessionRefresh(
     const timeUntilRefresh = Math.max(0, tokenExp - now - refreshBeforeMs);
     const timeUntilExpiry = Math.max(0, tokenExp - now);
 
-    console.log(`[Session] Token expira en ${Math.round(timeUntilExpiry/1000)}s, refresh en ${Math.round(timeUntilRefresh/1000)}s`);
+    if (DEBUG_SESSION) console.log(`[Session] Token expira en ${Math.round(timeUntilExpiry/1000)}s, refresh en ${Math.round(timeUntilRefresh/1000)}s`);
 
     // Si ya pasó el tiempo de refresh, hacerlo inmediatamente
     if (timeUntilRefresh <= 0 && timeUntilExpiry > 0) {
-      console.log('[Session] Ejecutando refresh inmediato (cerca de expiración)');
+      if (DEBUG_SESSION) console.log('[Session] Ejecutando refresh inmediato (cerca de expiración)');
       refreshToken().then(success => {
         if (!success && onLogout && !isLoggingOutRef.current) {
-          console.warn('[Session] Refresh inmediato falló - cerrando sesión');
+          if (DEBUG_SESSION) console.warn('[Session] Refresh inmediato falló - cerrando sesión');
           isLoggingOutRef.current = true;
           onLogout();
         }
@@ -134,7 +138,7 @@ export function useSessionRefresh(
 
     // Si ya expiró, hacer logout
     if (timeUntilExpiry <= 0) {
-      console.warn('[Session] Token ya expirado');
+      if (DEBUG_SESSION) console.warn('[Session] Token ya expirado');
       if (onLogout && !isLoggingOutRef.current) {
         isLoggingOutRef.current = true;
         onLogout();
@@ -144,24 +148,24 @@ export function useSessionRefresh(
 
     // Programar el refresh
     refreshTimerRef.current = setTimeout(async () => {
-      console.log('[Session] Timer de refresh disparado');
+      if (DEBUG_SESSION) console.log('[Session] Timer de refresh disparado');
       const success = await refreshToken();
       if (!success && onLogout && !isLoggingOutRef.current) {
-        console.warn('[Session] Refresh automático falló - cerrando sesión');
+        if (DEBUG_SESSION) console.warn('[Session] Refresh automático falló - cerrando sesión');
         isLoggingOutRef.current = true;
         onLogout();
       }
       // Si tuvo éxito, el token se actualizará y se reprogramará el refresh
     }, timeUntilRefresh);
 
-    // Actualizar tiempo restante cada segundo para la UI
+    // Actualizar tiempo restante cada minuto para la UI
     if (countdownIntervalRef.current) {
       clearInterval(countdownIntervalRef.current);
     }
     countdownIntervalRef.current = setInterval(() => {
       const remaining = Math.max(0, Math.ceil((tokenExp - Date.now()) / 1000));
       setTimeRemaining(remaining);
-    }, 1000);
+    }, SESSION_CHECK_INTERVAL_MS);
 
   }, [refreshToken, onLogout]);
 
@@ -182,7 +186,7 @@ export function useSessionRefresh(
     // Timer para mostrar warning de inactividad
     if (timeUntilWarning > 0) {
       warningTimerRef.current = setTimeout(() => {
-        console.log('[Session] Mostrando aviso de inactividad');
+        if (DEBUG_SESSION) console.log('[Session] Mostrando aviso de inactividad');
         setShowExpiryWarning(true);
       }, timeUntilWarning);
     }
@@ -193,7 +197,7 @@ export function useSessionRefresh(
     
     if (timeUntilLogout > 0) {
       inactivityTimerRef.current = setTimeout(() => {
-        console.warn('[Session] Logout por inactividad');
+        if (DEBUG_SESSION) console.warn('[Session] Logout por inactividad');
         if (onLogout && !isLoggingOutRef.current) {
           isLoggingOutRef.current = true;
           onLogout();
@@ -224,7 +228,7 @@ export function useSessionRefresh(
       lastActivityRef.current = Date.now();
       setShowExpiryWarning(false);
     } else if (onLogout && !isLoggingOutRef.current) {
-      console.warn('[Session] Fallo al extender sesión');
+      if (DEBUG_SESSION) console.warn('[Session] Fallo al extender sesión');
       isLoggingOutRef.current = true;
       onLogout();
     }
@@ -243,7 +247,7 @@ export function useSessionRefresh(
     // Obtener la expiración real del token
     const tokenExp = getTokenExpiration(token);
     if (!tokenExp) {
-      console.error('[Session] No se pudo obtener la expiración del token');
+      if (DEBUG_SESSION) console.error('[Session] No se pudo obtener la expiración del token');
       return;
     }
 
@@ -255,8 +259,8 @@ export function useSessionRefresh(
     const now = Date.now();
     const remaining = Math.max(0, Math.ceil((tokenExp - now) / 1000));
     setTimeRemaining(remaining);
-    
-    console.log(`[Session] Nuevo token detectado, expira en ${remaining}s`);
+
+    if (DEBUG_SESSION) console.log(`[Session] Nuevo token detectado, expira en ${remaining}s`);
 
     // Programar refresh basado en expiración REAL del token
     scheduleTokenRefresh(tokenExp);

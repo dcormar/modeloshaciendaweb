@@ -29,7 +29,7 @@ export default function ConsultaPage({ token, onLogout }: { token: string; onLog
     setResult(null)
 
     try {
-      const response = await fetchWithAuth('http://localhost:8000/consulta/query', {
+      const response = await fetchWithAuth('/api/consulta/query', {
         token,
         onLogout,
         method: 'POST',

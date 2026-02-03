@@ -8,7 +8,7 @@ import logging, os
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
-router = APIRouter(prefix="/modelos", tags=["modelos"])
+router = APIRouter(prefix="/api/modelos", tags=["modelos"])
 
 class EstadoModelos(BaseModel):
     ingresos_netos: float

@@ -51,14 +51,6 @@ export default function ChatAssistant({ token, onLogout }: ChatAssistantProps) {
     }
   }, [])
 
-  // Mensaje más conciso después de acciones
-  const getWelcomeMessage = () => {
-    const hasActions = messages.some(m => m.actions && m.actions.length > 0)
-    if (hasActions) {
-      return '¿En qué más puedo ayudarte?'
-    }
-    return '¡Hola! 👋 Soy tu asistente de Nementium.ai. Puedo ayudarte con:\n\n• Preguntas sobre cómo usar la aplicación\n• Información sobre modelos tributarios y plazos\n• Dudas sobre Hacienda y Seguridad Social\n• Enviar notificaciones a tus contactos\n\n¿En qué puedo ayudarte?'
-  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -82,7 +74,7 @@ export default function ChatAssistant({ token, onLogout }: ChatAssistantProps) {
         content: m.content
       }))
 
-      const response = await fetchWithAuth('http://localhost:8000/assistant/chat', {
+      const response = await fetchWithAuth('/api/assistant/chat', {
         token,
         onLogout,
         method: 'POST',

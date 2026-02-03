@@ -109,12 +109,12 @@ export default function MesDetallePage({ token, onLogout }: { token: string; onL
         desde = `${anio}-${mesStr}-${diaStr}`
         hasta = desde
       }
-      const ventasRes = await fetchWithAuth(`http://localhost:8000/ventas?desde=${desde}&hasta=${hasta}`, {
+      const ventasRes = await fetchWithAuth(`/api/ventas/?desde=${desde}&hasta=${hasta}`, {
         token,
         onLogout,
       })
       if (!ventasRes.ok) throw new Error('Error cargando ventas')
-      const facturasRes = await fetchWithAuth(`http://localhost:8000/api/facturas?desde=${desde}&hasta=${hasta}`, {
+      const facturasRes = await fetchWithAuth(`/api/facturas/?desde=${desde}&hasta=${hasta}`, {
         token,
         onLogout,
       })

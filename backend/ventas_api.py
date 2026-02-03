@@ -10,7 +10,7 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/ventas", tags=["ventas"])
+router = APIRouter(prefix="/api/ventas", tags=["ventas"])
 
 class Venta(BaseModel):
     ID: Optional[int]

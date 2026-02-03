@@ -10,7 +10,7 @@ from auth import get_current_user, UserInDB
 from services.consulta_agent_graph import process_query_with_graph
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/consulta", tags=["consulta"])
+router = APIRouter(prefix="/api/consulta", tags=["consulta"])
 
 
 class ConsultaRequest(BaseModel):

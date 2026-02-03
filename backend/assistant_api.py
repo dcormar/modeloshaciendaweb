@@ -28,7 +28,7 @@ from auth import get_current_user, UserInDB
 from services.assistant_agent import process_assistant_message
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/assistant", tags=["assistant"])
+router = APIRouter(prefix="/api/assistant", tags=["assistant"])
 
 
 # ============================================================================

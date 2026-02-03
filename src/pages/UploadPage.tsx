@@ -232,7 +232,7 @@ export default function UploadPage({ token, onLogout }: Props) {
 
   const loadHistorico = () => {
     const offset = (currentPage - 1) * pageSize;
-    const url = `http://localhost:8000/api/uploads/historico?limit=${pageSize}&offset=${offset}&order_by=${sortColumn}&order_dir=${sortDirection}`;
+    const url = `/api/uploads/historico?limit=${pageSize}&offset=${offset}&order_by=${sortColumn}&order_dir=${sortDirection}`;
     
     fetchWithAuth(url, {
       token: token || undefined,
@@ -783,7 +783,7 @@ export default function UploadPage({ token, onLogout }: Props) {
     
     // Si es una factura, cargar los datos de la factura
     if (op.tipo === "FACTURA" && token) {
-      const url = `http://localhost:8000/api/uploads/${op.id}/factura`;
+      const url = `/api/uploads/${op.id}/factura`;
       console.log("🔵 [DEBUG] handleRowClick - URL del endpoint:", url);
       console.log("🔵 [DEBUG] handleRowClick - Token disponible:", !!token);
       

@@ -25,7 +25,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 UPLOAD_BASE = os.getenv("UPLOAD_BASE", "/tmp/uploads")
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/generate-invoice", tags=["generate-invoice"])
+router = APIRouter(prefix="/api/generate-invoice", tags=["generate-invoice"])
 
 
 def sanitize_folder(name: str) -> str:

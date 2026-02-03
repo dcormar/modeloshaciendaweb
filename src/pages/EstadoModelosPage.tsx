@@ -6,7 +6,7 @@ export default function EstadoModelosPage({ token, onLogout }: { token: string; 
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    fetchWithAuth('http://localhost:8000/modelos/estado', {
+    fetchWithAuth('/api/modelos/estado', {
       token,
       onLogout,
     })

@@ -13,7 +13,7 @@ export default function LoginPage({ onLogin }: { onLogin: (token: string) => voi
     setLoading(true)
     setError('')
     try {
-      const res = await fetch('http://localhost:8000/auth/token', {
+      const res = await fetch('/api/auth/token', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({ username: email, password, grant_type: 'password' })

@@ -209,7 +209,7 @@ function App() {
     const verifyToken = async () => {
       setCheckingToken(true)
       try {
-        const response = await fetchWithAuth('http://localhost:8000/auth/me', {
+        const response = await fetchWithAuth('/api/auth/me', {
           token,
           onLogout: () => handleLogout('fetchWithAuth-401'),
         })

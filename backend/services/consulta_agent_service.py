@@ -56,7 +56,7 @@ Basándote en el análisis de la consulta, genera un plan de acciones en formato
 Análisis: {analysis}
 
 APIs disponibles:
-- GET /api/facturas?desde=YYYY-MM-DD&hasta=YYYY-MM-DD - Obtener facturas
+- GET /api/facturas/?desde=YYYY-MM-DD&hasta=YYYY-MM-DD - Obtener facturas
 - GET /ventas?desde=YYYY-MM-DD&hasta=YYYY-MM-DD - Obtener ventas
 - GET /dashboard/ - Obtener resumen de últimos 6 meses
 - GET /dashboard/historico?limit=N - Obtener histórico de operaciones
@@ -66,7 +66,7 @@ Responde SOLO con un JSON válido con esta estructura:
   "actions": [
     {{
       "type": "api",
-      "endpoint": "/api/facturas",
+      "endpoint": "/api/facturas/",
       "method": "GET",
       "params": {{"desde": "2024-01-01", "hasta": "2024-12-31"}},
       "description": "Obtener facturas del período"

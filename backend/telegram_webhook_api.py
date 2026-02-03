@@ -8,7 +8,7 @@ from typing import Dict, Any
 from services.telegram_service import handle_telegram_webhook
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/telegram", tags=["telegram"])
+router = APIRouter(prefix="/api/telegram", tags=["telegram"])
 
 
 @router.post("/webhook")

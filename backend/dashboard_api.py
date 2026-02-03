@@ -7,7 +7,7 @@ import os
 import httpx
 import logging
 
-router = APIRouter(prefix="/dashboard", tags=["dashboard"])
+router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 logger = logging.getLogger(__name__)
 
 class MesResumen(BaseModel):

@@ -107,7 +107,19 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(lifespan=lifespan)
+app = FastAPI(lifespan=lifespan, redirect_slashes=False)
+# Middleware para manejar proxy headers (Cloudflare/Nginx)
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+
+class ProxyHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        # Si viene de un proxy HTTPS, forzar el scheme
+        if request.headers.get("x-forwarded-proto") == "https":
+            request.scope["scheme"] = "https"
+        return await call_next(request)
+
+app.add_middleware(ProxyHeadersMiddleware)
 
 
 app.add_middleware(

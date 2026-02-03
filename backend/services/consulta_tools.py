@@ -73,7 +73,7 @@ async def _get_facturas_impl(
     if limit is not None:
         params.append(f"limit={limit}")
     
-    url = f"{base_url}/api/facturas?" + "&".join(params)
+    url = f"{base_url}/api/facturas/?" + "&".join(params)
     
     async with httpx.AsyncClient(
         timeout=30, 
@@ -155,7 +155,7 @@ def get_facturas(
 async def _get_ventas_impl(desde: str, hasta: str) -> List[Dict[str, Any]]:
     """Implementación async de get_ventas."""
     base_url = "http://localhost:8000"
-    url = f"{base_url}/ventas?desde={desde}&hasta={hasta}"
+    url = f"{base_url}/api/ventas/?desde={desde}&hasta={hasta}"
     
     async with httpx.AsyncClient(
         timeout=30, 
@@ -203,7 +203,7 @@ def get_ventas(desde: str, hasta: str) -> List[Dict[str, Any]]:
 async def _get_dashboard_impl() -> Dict[str, Any]:
     """Implementación async de get_dashboard."""
     base_url = "http://localhost:8000"
-    url = f"{base_url}/dashboard/"
+    url = f"{base_url}/api/dashboard/"
     
     async with httpx.AsyncClient(
         timeout=30, 
@@ -247,7 +247,7 @@ def get_dashboard() -> Dict[str, Any]:
 async def _get_historico_impl(limit: int = 10) -> Dict[str, Any]:
     """Implementación async de get_historico."""
     base_url = "http://localhost:8000"
-    url = f"{base_url}/dashboard/historico?limit={limit}"
+    url = f"{base_url}/api/dashboard/historico?limit={limit}"
     
     async with httpx.AsyncClient(
         timeout=30, 

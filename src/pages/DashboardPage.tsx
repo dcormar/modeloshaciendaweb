@@ -35,7 +35,7 @@ export default function DashboardPage({ token, onLogout }: { token: string; onLo
     if (hasLoadedResumenRef.current) return
     hasLoadedResumenRef.current = true
 
-    fetchWithAuth('http://localhost:8000/dashboard/', {
+    fetchWithAuth('/api/dashboard/', {
       token,
       onLogout,
     })
@@ -51,7 +51,7 @@ export default function DashboardPage({ token, onLogout }: { token: string; onLo
     if (hasLoadedHistoricoRef.current) return
     hasLoadedHistoricoRef.current = true
 
-    fetchWithAuth('http://localhost:8000/dashboard/historico?limit=10', {
+    fetchWithAuth('/api/dashboard/historico?limit=10', {
       //cambiar limite a 60 dias en prod
       token,
       onLogout,
